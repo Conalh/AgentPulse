@@ -1,6 +1,6 @@
 {
   "name": "@conalh/agentpulse",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Live trajectory verdict for AI coding agent sessions. Reads Claude Code / Cursor / Codex transcripts locally, classifies what the agent is doing, renders it as plain English. No LLM, no cloud, no telemetry.",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,6 +22,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
+    "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
     "prepare": "npm run build",

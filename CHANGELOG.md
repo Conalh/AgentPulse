@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.5.1] — 2026-05-23
+
+### Fixed — orphan parser files shipping in the v0.5.0 tarball
+
+The internal inspection that followed the v0.5.0 ship caught one real bug: `tsc` doesn't clean its `outDir`, so when v0.5.0 deleted `src/parser.ts` + `src/parsers/`, the previously-compiled artifacts under `dist/parser.{js,d.ts}` and `dist/parsers/{claude-code,codex,util}.{js,d.ts}` weren't removed. They got picked up by `npm pack`'s `dist/**/*.{js,d.ts}` glob and shipped to the registry.
+
+The orphan `.js` files contained pre-v0.5 vendored-parser code; the orphan `.d.ts` files referenced a `./types.js` shape that no longer matches what's exported. Any tool importing by subpath (e.g. `agentpulse/dist/parser.js`) would have hit a stale, inconsistent surface. Normal `import 'agentpulse'` users were unaffected — the `exports` map limits the public surface to `.`.
+
+- **`package.json` scripts** gained a `prebuild` step:
+
+  ```json
+  "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  ```
+
+  Pure Node stdlib, cross-platform (works on Windows without `rimraf`). Every `npm run build` (and therefore every `prepare` / `prepublishOnly`) now starts from an empty `dist/`.
+
+### Tarball metrics
+
+- **Before** (v0.5.0): 62 files, 110.5 kB
+- **After**  (v0.5.1): 54 files, 102.8 kB
+
+8 orphan files dropped, ~7.7 kB saved.
+
+### Tests
+
+163 (unchanged). The clean step doesn't touch source or test coverage.
+
 ## [0.5.0] — 2026-05-23
 
 ### Parser surface moved to `agent-gov-core@1.1.0`
