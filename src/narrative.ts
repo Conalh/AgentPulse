@@ -286,6 +286,28 @@ function renderDrifting(enriched: EnrichedWindow, verdict: TrajectoryVerdict): s
   return parts.join('');
 }
 
+/**
+ * v0.3.2: Layer 2.5 sequence-pattern phrases. Appended to the bucket
+ * narrative when verdict.sequence is set. Kept short and in the same
+ * "explain it plainly" voice as the rest of the narrative.
+ */
+function sequencePhrase(verdict: TrajectoryVerdict): string | null {
+  const seq = verdict.sequence;
+  if (!seq || seq.pattern === 'none') return null;
+  switch (seq.pattern) {
+    case 'tdd_loop':
+      return 'It ran tests after each change in a tight loop.';
+    case 'refuse_to_verify':
+      return "It's been editing without running anything to verify — worth checking.";
+    case 'stuck_loop':
+      return "It's stuck editing the same file and the tests keep failing.";
+    case 'exploratory_edit':
+      return 'It explored first, then started editing in that area.';
+    default:
+      return null;
+  }
+}
+
 export function renderRecap(
   enriched: EnrichedWindow,
   outcome: OutcomeSignal,
@@ -314,6 +336,19 @@ export function renderRecap(
     default:
       body = 'Your agent has been working for **' + humanDuration(enriched.durationMs) + '**.';
       break;
+  }
+
+  // v0.3.2: append a sequence-pattern phrase when one fired. We skip
+  // appending to `drifting` (the warning lede already dominates that
+  // narrative) and to `idle` (the sequence is about *active* shape and
+  // the agent isn't currently active).
+  const seqPhrase = sequencePhrase(verdict);
+  if (
+    seqPhrase &&
+    verdict.bucket !== 'drifting' &&
+    verdict.bucket !== 'idle'
+  ) {
+    body = body + ' ' + seqPhrase;
   }
 
   let narrative = body;

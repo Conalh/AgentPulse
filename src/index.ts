@@ -16,6 +16,7 @@ export { parseTranscript } from './parser.js';
 export { enrichWindow } from './enrich.js';
 export { classifyTrajectory, readOutcomeSignal } from './trajectory.js';
 export { renderRecap } from './narrative.js';
+export { analyzeSequences } from './sequences.js';
 
 /**
  * Convenience pipeline: parse → enrich → classify → render.
@@ -27,6 +28,7 @@ export { renderRecap } from './narrative.js';
 import { parseTranscript } from './parser.js';
 import { enrichWindow } from './enrich.js';
 import { classifyTrajectory, readOutcomeSignal } from './trajectory.js';
+import { analyzeSequences } from './sequences.js';
 import { renderRecap } from './narrative.js';
 import type { PulseRecap } from './types.js';
 
@@ -60,12 +62,17 @@ export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
 
   const enriched = enrichWindow(events, startAt, endAt);
   const outcome = readOutcomeSignal(enriched);
+  // v0.3.2: Layer 2.5 — ordered action-sequence detection. Runs on the
+  // enriched window's events (already timestamp-filtered) and feeds the
+  // classifier as an additional input. Pure function, no I/O.
+  const sequence = analyzeSequences(enriched.events);
   const verdict = classifyTrajectory(enriched, outcome, {
     detectorsEnabled: opts.detectorsEnabled ?? true,
     // v0.3.1: thread repoRoot into drift detection so a Write outside the
     // session's repo is flagged regardless of whether it hits the legacy
     // hardcoded prefixes (`/tmp/`, `/var/`, `~/`).
     repoRoot: opts.repoRoot,
+    sequence,
   });
 
   return renderRecap(enriched, outcome, verdict);
