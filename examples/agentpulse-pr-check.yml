@@ -1,0 +1,51 @@
+# AgentPulse on every pull request.
+#
+# Downloads agent-session transcripts from the PR's CI artifact, runs
+# AgentPulse one-shot against them, and gates the PR check on `drifting` /
+# `stuck` sessions. Posts a sticky comment with the verdict summary.
+#
+# Drop this at `.github/workflows/agentpulse.yml` in a repo that uploads
+# its agent transcripts as a CI artifact named `ai-agent-transcripts`.
+
+name: AgentPulse
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write   # only needed for the sticky-comment step
+
+jobs:
+  agentpulse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Most repos upload transcripts as a separate artifact in an earlier
+      # CI job. Adjust this to match your pipeline; if your transcripts live
+      # in the workspace at a fixed path, drop this download step entirely.
+      - uses: actions/download-artifact@v6
+        with:
+          name: ai-agent-transcripts
+          path: agentpulse-transcripts
+        continue-on-error: true
+
+      - uses: Conalh/AgentPulse@v0.4.2
+        id: agentpulse
+        with:
+          transcript-dirs: agentpulse-transcripts
+          strict: 'true'
+          comment-on-pr: 'true'
+          # Wider window than the live TUI because CI runs analyze a
+          # complete-session artifact, not the last 20 min.
+          window: '24h'
+
+      - name: Report outputs
+        if: always()
+        run: |
+          echo "Sessions analyzed: ${{ steps.agentpulse.outputs.session-count }}"
+          echo "Drifting:          ${{ steps.agentpulse.outputs.drifting-count }}"
+          echo "Stuck:             ${{ steps.agentpulse.outputs.stuck-count }}"
+          echo "Gating finding:    ${{ steps.agentpulse.outputs.gating-finding }}"
