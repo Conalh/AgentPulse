@@ -2,13 +2,21 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
-## [Unreleased]
+## [0.4.2] — 2026-05-23
 
-### Notifications on state transitions
+Two features ship together: the GitHub Action variant (CI integration on rails) and local notifications (walk away from the TUI and still hear when something flips).
+
+### Added — GitHub Action
+
+- **`action.yml` at repo root** — composite Action shape matching the rest of the gov-suite. `uses: Conalh/AgentPulse@v0.4.2` runs `agentpulse live --once --format json` + `--format text` against the workflow's transcript directories, parses the JSON for step outputs, streams the text into the step summary, and optionally posts a sticky PR comment that updates in place across pushes.
+- **Inputs**: `transcript-dirs`, `window`, `stale`, `strict`, `no-detectors`, `hide-idle`, `show-subagents`, `max-sessions`, `comment-on-pr`, `github-token`.
+- **Outputs**: `gating-finding`, `session-count`, `drifting-count`, `stuck-count`, `json-report-path` so downstream steps can branch on the result.
+- **`examples/agentpulse-pr-check.yml`** — drop-in pull-request workflow that downloads transcripts from a CI artifact, runs AgentPulse, gates on `drifting`/`stuck`, and posts the verdict as a sticky PR comment.
+- Self-contained at the git tag — `npm ci --omit=dev && npm run build` inside the action's checkout (same pattern as `GovVerdict@v0.2.1`), so no npm-publish dependency.
+
+### Added — Notifications on state transitions
 
 Walk away from the TUI and still hear it when an agent goes sideways.
-
-### Added
 
 - **`--notify <mode>` on `agentpulse live`** — fires a local notification when any session flips INTO `drifting` or `stuck`. Modes: `none` (default), `bell`, `os`, `both`. Opt-in by design; defaulting to bell would be nag-prone.
 - **Trigger policy** (in `src/notifications.ts`): only fires on transitions INTO an alert bucket from a non-alert state. So `converging → drifting` fires; `drifting → drifting` doesn't (no double-alert); `drifting → idle` doesn't (clearing is silent). `null → drifting` (first pulse already concerning) fires.
