@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.3.3] — 2026-05-23
+
+### Fixed
+
+- **Activity sparkline row jerked between refreshes.** Pre-fix, the row was conditional on `events.length > 0` and the sparkline itself could return an empty string when no events fell into any bucket — both of which shifted the layout horizontally on every refresh tick. Pinned the sparkline cell to a fixed `Box width` (`SPARKLINE_WIDTH = 24`) and made the sparkline always return a string of exactly that width (spaces when empty). The trailing event-count text now holds its column even as the bucket pattern changes underneath.
+
 ## [0.3.2] — 2026-05-23
 
 The sprint release. Five things land together: the long-promised sequence pattern detection, sharper converging rule, urgency-sorted session list, activity-density sparkline in the detail pane, and a tightened drift regex that fixes a false positive we caught in the wild.

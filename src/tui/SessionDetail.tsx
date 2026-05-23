@@ -13,6 +13,13 @@ import { formatAgo, formatDelta } from './duration.js';
 import { sparkline } from './sparkline.js';
 
 /**
+ * v0.3.3: pinned sparkline width. Kept as a constant so the cell-Box and
+ * the sparkline helper agree on a single source of truth — drift between
+ * them is what caused the activity row to "jerk" on every refresh.
+ */
+const SPARKLINE_WIDTH = 24;
+
+/**
  * v0.3.1: Render a single narrative line, parsing `**bold**` Markdown spans
  * into Ink `<Text bold>` nodes. Pre-fix, the narrative templates use `**`
  * for emphasis (which is the right source format for plain-text consumers),
@@ -121,17 +128,31 @@ export function SessionDetail({
         </Box>
       )}
 
-      {recap && recap.enriched.events.length > 0 && (
+      {/* v0.3.3: ALWAYS render the activity row once a recap exists, even
+          when no events fell into any bucket — pre-fix, the row appeared
+          and disappeared based on `events.length > 0` and the sparkline
+          string itself could be empty when all events were out-of-window,
+          both of which caused the surrounding text to shimmer (the "jerk
+          around" you screenshotted). The sparkline now always returns a
+          string of exactly SPARKLINE_WIDTH characters (spaces when empty)
+          and lives inside a Box of pinned width, so the trailing event-
+          count text holds its column. */}
+      {recap && (
         <Box marginTop={1}>
           <Text dimColor>Activity: </Text>
-          <Text color={bucket ? colorFor(bucket) : 'cyan'}>
-            {sparkline(
-              recap.enriched.events.map((e) => e.timestamp),
-              recap.enriched.windowStart,
-              recap.enriched.windowEnd,
-              { width: 24 }
-            )}
-          </Text>
+          <Box width={SPARKLINE_WIDTH}>
+            <Text color={bucket ? colorFor(bucket) : 'cyan'}>
+              {sparkline(
+                recap.enriched.events.map((e) => e.timestamp),
+                recap.enriched.windowStart,
+                recap.enriched.windowEnd,
+                {
+                  width: SPARKLINE_WIDTH,
+                  emptyFallback: ' '.repeat(SPARKLINE_WIDTH),
+                }
+              )}
+            </Text>
+          </Box>
           <Text dimColor>
             {' '}({recap.enriched.events.length} event{recap.enriched.events.length === 1 ? '' : 's'} over{' '}
             {formatDelta(recap.enriched.windowEnd - recap.enriched.windowStart)})
