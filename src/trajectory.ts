@@ -16,6 +16,7 @@ import type { Finding } from 'agent-gov-core';
 import type {
   EnrichedWindow,
   OutcomeSignal,
+  SequenceSignal,
   TrajectoryBucket,
   TrajectoryOptions,
   TrajectoryVerdict,
@@ -437,13 +438,19 @@ export function classifyTrajectory(
   const editing = enriched.actionCounts.editing ?? 0;
   const exploration = enriched.actionCounts.exploration ?? 0;
   const cluster = topClusterShare(enriched.pathClusters);
+  // v0.3.2: Layer 2.5 sequence signal. When supplied, it influences a few
+  // specific rules below — stuck_loop overrides Rule 3 stuck, tdd_loop
+  // bumps converging confidence, refuse_to_verify flips bucket on heavy
+  // editing, exploratory_edit adds a supporting signal. The signal also
+  // rides on the verdict so the narrative renderer can append a phrase.
+  const sequence = opts?.sequence;
 
   // 1. Drifting — first priority. Detectors are on by default. Drift findings
   //    are worth surfacing even if the agent has technically gone quiet.
   if (opts?.detectorsEnabled !== false) {
     const { drifts, signals } = detectDrifts(enriched.events, opts?.repoRoot);
     if (drifts.length > 0) {
-      return makeVerdict('drifting', 0.9, uniq(signals).slice(0, 4), drifts);
+      return makeVerdict('drifting', 0.9, uniq(signals).slice(0, 4), drifts, sequence);
     }
   }
 
@@ -484,7 +491,20 @@ export function classifyTrajectory(
       }
     }
     // Higher confidence on truly-empty windows — we have unambiguous data.
-    return makeVerdict('idle', isEmpty ? 0.85 : 0.75, signals.slice(0, 4), []);
+    return makeVerdict('idle', isEmpty ? 0.85 : 0.75, signals.slice(0, 4), [], sequence);
+  }
+
+  // 2.5. stuck_loop sequence (Layer 2.5) — fires BEFORE Rule 3 Done because
+  // a tight loop on the same file with failing tests is the strongest stuck
+  // signal we have, regardless of whether the agent emitted a completion
+  // verb. Confidence 0.85; signals prepended so the loop is the headline.
+  if (sequence?.pattern === 'stuck_loop' && (sequence.cycleCount ?? 0) >= 2) {
+    const signals: string[] = [
+      `stuck on ${sequence.primaryFile ?? 'the same file'} (${sequence.cycleCount} failing cycles)`,
+      ...sequence.details,
+    ];
+    if (editing > 0) signals.push(`${editing} total edits in window`);
+    return makeVerdict('stuck', 0.85, signals.slice(0, 4), [], sequence);
   }
 
   // 3. Done — completion verb + idle gap + not actively being corrected.
@@ -502,7 +522,7 @@ export function classifyTrajectory(
     } else if (outcome.verificationTrend === 'improving') {
       signals.push('tests recovered to green');
     }
-    return makeVerdict('done', 0.85, signals.slice(0, 4), []);
+    return makeVerdict('done', 0.85, signals.slice(0, 4), [], sequence);
   }
 
   // 3. Stuck — heavy editing + verifications not improving + user pushing back.
@@ -514,18 +534,32 @@ export function classifyTrajectory(
     editing >= 5 &&
     (outcome.verificationTrend === 'flat_fail' ||
       outcome.verificationTrend === 'regressing');
-  if (stuckHardSignal || stuckSoftSignal) {
+  // v0.3.2: refuse_to_verify + editing ≥ 5 also flips to stuck even
+  // without a flat_fail signal. The whole point: we have no verification
+  // data because the agent never ran any.
+  const refuseToVerifyStuck =
+    sequence?.pattern === 'refuse_to_verify' && editing >= 5;
+  if (stuckHardSignal || stuckSoftSignal || refuseToVerifyStuck) {
     const target = firstEditedFile(enriched);
-    const signals: string[] = [
-      `${editing} edits${target ? ` (top file: ${target})` : ''}`,
-      outcome.verificationTrend === 'regressing'
-        ? 'tests went from passing to failing'
-        : 'tests still failing',
-    ];
-    if (outcome.userToneTrend === 'correcting') {
-      signals.push('user is correcting the agent');
+    const signals: string[] = [];
+    if (refuseToVerifyStuck) {
+      signals.push(
+        `${editing} edits with no verification — agent isn't running anything`
+      );
+      signals.push(...sequence!.details);
+    } else {
+      signals.push(`${editing} edits${target ? ` (top file: ${target})` : ''}`);
+      signals.push(
+        outcome.verificationTrend === 'regressing'
+          ? 'tests went from passing to failing'
+          : 'tests still failing'
+      );
+      if (outcome.userToneTrend === 'correcting') {
+        signals.push('user is correcting the agent');
+      }
     }
-    return makeVerdict('stuck', stuckHardSignal ? 0.8 : 0.7, signals.slice(0, 4), []);
+    const confidence = stuckHardSignal ? 0.8 : refuseToVerifyStuck ? 0.75 : 0.7;
+    return makeVerdict('stuck', confidence, signals.slice(0, 4), [], sequence);
   }
 
   // 4. Converging — editing happening, tests recovering, focus narrowing.
@@ -541,7 +575,23 @@ export function classifyTrajectory(
       'tests went from failing to passing',
       `top cluster ${cluster.top} covers ${pct}% of activity`,
     ];
-    return makeVerdict('converging', 0.85, signals.slice(0, 4), []);
+    // v0.3.2: tdd_loop (≥3 cycles) on top of a converging shape bumps
+    // confidence to 0.9 — the explicit iteration loop is a stronger
+    // signal than just "edits + improving tests".
+    let confidence = 0.85;
+    if (sequence?.pattern === 'tdd_loop' && (sequence.cycleCount ?? 0) >= 3) {
+      confidence = 0.9;
+      signals.unshift(
+        `tight TDD loop (${sequence.cycleCount} edit→verify cycles)`
+      );
+    }
+    // v0.3.2: exploratory_edit adds a supporting signal when both fire.
+    if (sequence?.pattern === 'exploratory_edit') {
+      signals.push(
+        `explored ${sequence.details[0] ?? 'the area'} before editing`
+      );
+    }
+    return makeVerdict('converging', confidence, signals.slice(0, 4), [], sequence);
   }
 
   // 4b. Converging (no verification signal) — v0.2.2 patch.
@@ -566,7 +616,7 @@ export function classifyTrajectory(
       signals.push(`primary file: ${enriched.primaryFiles[0]}`);
     }
     signals.push('no verification data — confidence reflects that');
-    return makeVerdict('converging', 0.6, signals.slice(0, 4), []);
+    return makeVerdict('converging', 0.6, signals.slice(0, 4), [], sequence);
   }
 
   // 5. Exploring — no edits, lots of reads/searches.
@@ -582,7 +632,7 @@ export function classifyTrajectory(
     if (outcome.userToneTrend === 'questioning') {
       signals.push('user asked a question');
     }
-    return makeVerdict('exploring', 0.7, signals.slice(0, 4), []);
+    return makeVerdict('exploring', 0.7, signals.slice(0, 4), [], sequence);
   }
 
   // 6. Fallback — low-confidence exploring with a transparent "we don't know"
@@ -593,16 +643,23 @@ export function classifyTrajectory(
     `user tone: ${outcome.userToneTrend}`,
     'no decisive signal — defaulting to exploring',
   ];
-  return makeVerdict('exploring', 0.3, fallbackSignals.slice(0, 4), []);
+  return makeVerdict('exploring', 0.3, fallbackSignals.slice(0, 4), [], sequence);
 }
 
 function makeVerdict(
   bucket: TrajectoryBucket,
   confidence: number,
   signals: string[],
-  drifts: Finding[]
+  drifts: Finding[],
+  sequence?: SequenceSignal
 ): TrajectoryVerdict {
-  return { bucket, confidence, signals, drifts };
+  const v: TrajectoryVerdict = { bucket, confidence, signals, drifts };
+  // Only attach when there's a meaningful pattern. `none` is omitted so
+  // downstream consumers don't have to special-case it.
+  if (sequence && sequence.pattern !== 'none') {
+    v.sequence = sequence;
+  }
+  return v;
 }
 
 function uniq(arr: string[]): string[] {

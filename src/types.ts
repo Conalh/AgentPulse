@@ -149,6 +149,41 @@ export interface TrajectoryVerdict {
   /** When bucket === 'drifting', the gov-suite findings that fired during
    *  the window. Empty otherwise. */
   drifts: Finding[];
+  /** v0.3.2: ordered action-sequence pattern that fired during the window,
+   *  if any. The narrative renderer uses this to append a pattern-specific
+   *  sentence (TDD loop, refuse-to-verify, stuck loop, exploratory edit).
+   *  Undefined when no pattern fired or sequence analysis was skipped. */
+  sequence?: SequenceSignal;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Layer 2.5 — Ordered action-sequence signal (v0.3.2)
+//
+// Layer 2 produces unordered counts. Layer 2.5 looks at the chronological
+// shape of those events: did editing → verification cycle (TDD)? Did the
+// agent edit without ever verifying (refuse_to_verify)? Did edits target
+// the same file with failing tests in a loop (stuck_loop)? This signal
+// feeds Layer 4 (trajectory classifier) as an additional input.
+// ─────────────────────────────────────────────────────────────────────
+
+export type SequencePattern =
+  | 'tdd_loop'
+  | 'exploratory_edit'
+  | 'refuse_to_verify'
+  | 'stuck_loop'
+  | 'none';
+
+export interface SequenceSignal {
+  pattern: SequencePattern;
+  /** Confidence in [0,1]. Higher = more cycles / clearer shape. */
+  confidence: number;
+  /** Number of detected (editing → verification) or (exploration → editing)
+   *  cycles, where applicable. Undefined for `none` and `refuse_to_verify`. */
+  cycleCount?: number;
+  /** For `stuck_loop`: the file path being edited in every cycle. */
+  primaryFile?: string;
+  /** Human-readable details about why this pattern fired. */
+  details: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -205,6 +240,14 @@ export interface TrajectoryOptions {
    *  `C:\Dev\fit-ontology\`). When undefined, falls back to the legacy
    *  prefixes for backwards compatibility. */
   repoRoot?: string;
+  /** v0.3.2: Layer 2.5 sequence signal. When supplied, classifyTrajectory
+   *  uses it to override Rule 3 stuck (on stuck_loop), bump converging
+   *  confidence (on tdd_loop), flip to stuck on refuse_to_verify when
+   *  edits ≥ 5, and add an extra signal on exploratory_edit. The verdict
+   *  carries the signal through to the narrative renderer via
+   *  TrajectoryVerdict.sequence. Computed by analyzeSequences() in
+   *  src/sequences.ts; pulse() wires it in. */
+  sequence?: SequenceSignal;
 }
 
 // ─────────────────────────────────────────────────────────────────────
