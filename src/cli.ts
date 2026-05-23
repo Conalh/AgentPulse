@@ -41,6 +41,7 @@ Live options:
   --stale <duration>        Skip sessions older than this. Default: 1h
   --hide-idle               Hide sessions with zero activity in the window
   --max-sessions <N>        Cap the displayed list. Default: 10
+  --show-subagents          Include subagent transcripts (agent-<hex>)
 
   -h, --help                Show this help`;
 
@@ -286,6 +287,7 @@ function parseLiveCli(
         stale: { type: 'string' },
         'hide-idle': { type: 'boolean', default: false },
         'max-sessions': { type: 'string' },
+        'show-subagents': { type: 'boolean', default: false },
       },
     });
   } catch (err) {
@@ -340,6 +342,7 @@ function parseLiveCli(
       staleMs,
       hideIdle: Boolean(v['hide-idle']),
       maxSessions,
+      showSubagents: Boolean(v['show-subagents']),
     },
   };
 }

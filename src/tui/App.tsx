@@ -30,6 +30,24 @@ export interface AppProps {
   /** Cap the displayed list. 0 disables the cap. Default unbounded when
    *  omitted (the CLI passes 10 by default). */
   maxSessions?: number;
+  /** Show subagent transcripts (project names matching `agent-<hex>`).
+   *  Default false — subagent sessions are ephemeral tooling artifacts and
+   *  noise to the human watching their own work. */
+  showSubagents?: boolean;
+}
+
+/** Subagent-shaped project names — Claude Code stores transcripts of agents
+ *  spawned via the SDK under names like `agent-a92e01b8034a7c780`. These
+ *  are tooling artifacts, not human-facing sessions. */
+const SUBAGENT_NAME_RE = /^agent-[0-9a-f]{8,}/i;
+
+function isSubagentSession(s: SessionState): boolean {
+  const name = s.session.projectName ?? '';
+  if (SUBAGENT_NAME_RE.test(name)) return true;
+  // Also catch the raw-tail fallback case where projectName was empty and the
+  // file's basename UUID would trip the same pattern.
+  const tail = s.session.transcriptPath.split(/[\\/]/).pop() ?? '';
+  return SUBAGENT_NAME_RE.test(tail);
 }
 
 const HELP_LINES = [
@@ -46,6 +64,7 @@ export function App({
   onExit,
   hideIdle = false,
   maxSessions = 0,
+  showSubagents = false,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const [states, setStates] = useState<SessionState[]>(() => orchestrator.states());
@@ -61,6 +80,9 @@ export function App({
   // startup.
   const visibleStates = useMemo(() => {
     let v = states;
+    if (!showSubagents) {
+      v = v.filter((s) => !isSubagentSession(s));
+    }
     if (hideIdle) {
       v = v.filter((s) => {
         if (s.recap === null) return true; // first pulse pending — keep visible
@@ -71,7 +93,7 @@ export function App({
       v = v.slice(0, maxSessions);
     }
     return v;
-  }, [states, hideIdle, maxSessions]);
+  }, [states, hideIdle, maxSessions, showSubagents]);
 
   const [selectedId, setSelectedId] = useState<string | null>(() => {
     const initial = orchestrator.states();

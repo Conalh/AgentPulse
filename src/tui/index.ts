@@ -26,6 +26,7 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
   const discoveryRoots = opts.discoveryRoots;
   const hideIdle = opts.hideIdle ?? false;
   const maxSessions = opts.maxSessions ?? 10;
+  const showSubagents = opts.showSubagents ?? false;
 
   // Discovery is a one-shot probe; the watcher takes over for live updates.
   const initial = await discoverSessions({
@@ -112,6 +113,7 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
       onExit,
       hideIdle,
       maxSessions,
+      showSubagents,
     })
   );
 

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.3] — 2026-05-23
+
+Third dogfooding patch. v0.2.2 fixed the classifier and slug edge cases; this one fixes the visual layout flicker and the noise from subagent transcripts.
+
+### Fixed
+
+- **List row flicker on timestamp ticks.** Long project names (the `agent-<long-hex>` subagent transcripts in particular) overflowed the 32-char label box and wrapped to a second line. Every `5s ago → 6s ago` timer tick recomputed the layout and the wrap point could shift slightly, causing the whole box to "breathe" once a second. Fixed by computing the label truncation budget from the runtime suffix length (`(claude-code)` is 14 chars, `(codex)` is 7) so the combined label+runtime column is always ≤ 38 chars and never wraps.
+
+- **Last-ditch project name fallback.** When the slug fully fails and `cwd` is also missing, the label now falls back to `session-<id-prefix>` (e.g. `session-3f4a82c1`) instead of leaving a UUID-shaped tail or empty cell. Stable, recognizable, never blank.
+
+### Added
+
+- **Subagent transcript filter.** Project names matching `agent-<hex>` (the shape Claude Code uses for SDK-spawned subagent sessions) are now hidden by default. They're tooling artifacts, not the developer's own work. Pass `--show-subagents` to bring them back.
+
+  (Funny side effect: previously the dashboard showed the three subagents that built AgentPulse v0.2 itself as ghost rows. Now AgentPulse doesn't watch its own birth certificate by default. Still does with `--show-subagents`.)
+
+### Tests
+
+80, unchanged.
+
 ## [0.2.2] — 2026-05-23
 
 Second dogfooding patch. v0.2.1 fixed most of the "56 sessions of `C`" problem but introduced two new ones surfaced on the next real-world run: some sessions still showed up as `C--` (the `<letter>--` strip left the slug empty and the function fell back to the raw slug), heavily-editing sessions were misclassified as low-confidence exploring (the converging rule required verification data we didn't have), and the idle filter was hiding genuinely-active-this-hour Cursor / Codex sessions.

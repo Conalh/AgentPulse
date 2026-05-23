@@ -22,8 +22,19 @@ function fallbackLabel(state: SessionState): string {
   // Best-effort: last path segment minus extension.
   const parts = sess.transcriptPath.split(/[\\/]/);
   const tail = parts[parts.length - 1] ?? sess.id;
-  return tail.replace(/\.jsonl$/i, '');
+  const cleaned = tail.replace(/\.jsonl$/i, '');
+  // v0.2.3 last-ditch: if we still have nothing meaningful (UUID-shaped
+  // tail), use the short session id with a "session-" prefix so the user
+  // sees something stable and recognizable instead of raw hex.
+  if (/^[0-9a-f-]+$/i.test(cleaned) && cleaned.length > 6) {
+    return `session-${sess.id.slice(0, 8)}`;
+  }
+  return cleaned;
 }
+
+/** Column width budget for the label+runtime column. Keep stable so timestamp
+ *  ticks don't cause wrap-shift flicker. */
+const LABEL_COL_WIDTH = 38;
 
 export function SessionList({ states, selectedId, now }: SessionListProps): React.ReactElement {
   if (states.length === 0) {
@@ -59,6 +70,15 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
           ? `updated ${formatAgo(now, s.lastUpdated)}`
           : 'no recap yet';
 
+        // v0.2.3: compute the label truncation budget from the runtime
+        // suffix length so the combined column never exceeds LABEL_COL_WIDTH.
+        // Pre-fix, a long slug like `agent-a92e01b8034a7c780-7...` truncated
+        // to 22 chars + ` (claude-code)` overflowed the 32-char box and
+        // wrapped to two lines, causing layout flicker on every timer tick.
+        const runtimeSuffix = ` (${s.session.runtime})`;
+        const labelBudget = Math.max(8, LABEL_COL_WIDTH - runtimeSuffix.length - 1);
+        const truncatedLabel = truncate(label, labelBudget);
+
         return (
           <Box key={s.session.id} flexDirection="row">
             <Text color={isSelected ? 'cyan' : undefined}>
@@ -66,11 +86,9 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
             </Text>
             <Text color={pillColor}>{pill}</Text>
             <Text>{'  '}</Text>
-            <Box width={32}>
-              <Text bold={isSelected}>
-                {truncate(label, 22)}
-              </Text>
-              <Text dimColor> ({s.session.runtime})</Text>
+            <Box width={LABEL_COL_WIDTH}>
+              <Text bold={isSelected}>{truncatedLabel}</Text>
+              <Text dimColor>{runtimeSuffix}</Text>
             </Box>
             <Box width={22}>
               <Text color={bucket ? colorFor(bucket) : undefined} dimColor={dimBucket}>

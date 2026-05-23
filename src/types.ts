@@ -360,4 +360,9 @@ export interface LiveOptions {
    *  Sessions are sorted by lastModified DESC, so the cap keeps the freshest
    *  N visible. Use a large number or 0 to disable. */
   maxSessions?: number;
+  /** Show subagent transcripts (project names matching `agent-<hex>`).
+   *  Default: false — subagent sessions are filtered out because they're
+   *  ephemeral tooling artifacts, not the developer's own work.
+   *  v0.2.3 addition. */
+  showSubagents?: boolean;
 }
