@@ -28,12 +28,12 @@ Part of the [agent-gov suite](https://github.com/Conalh/agent-gov-core).
 
 Several tools watch agent sessions. AgentPulse's wedge is the specific combination none of them cover:
 
-| | Local-only | No LLM | Trajectory verdict | Per-session live dashboard | PR gate (planned) |
+| | Local-only | No LLM | Trajectory verdict | Per-session live dashboard | PR gate |
 |---|---|---|---|---|---|
 | LangSmith / Langfuse / AgentOps | ❌ cloud | ❌ LLM-judge | ❌ traces only | ⚠ | ⚠ |
 | Claude Code Session Memory | ✅ | ❌ LLM | ⚠ structured | ❌ | ❌ |
 | [agenttrace](https://github.com/luoyuctl/agenttrace) | ✅ | ✅ | ❌ metrics only | ⚠ TUI | ✅ |
-| **AgentPulse** | ✅ | ✅ | ✅ | ✅ | 🚧 v0.4 |
+| **AgentPulse** | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 The wedge is the combination. AgentPulse pairs naturally with agenttrace (which covers cost/health metrics) and with the rest of the [agent-gov suite](https://github.com/Conalh/agent-gov-core) (which covers PR-time gates).
 
@@ -55,6 +55,10 @@ agentpulse live [options]
 | `--max-sessions <N>` | `10` | Cap the displayed list |
 | `--show-subagents` | off | Include `agent-<hex>` SDK-spawned subagent transcripts |
 | `--no-detectors` | off | Skip the drifting bucket entirely |
+| `--once` | off | Headless snapshot mode. Runs once, prints, exits. No TUI. (v0.4.0+) |
+| `--format <fmt>` | `text` | With `--once`: `text` (human) or `json` (structured snapshot). (v0.4.0+) |
+| `--strict` | off | With `--once`: exit 1 if any session is `drifting` or `stuck`. (v0.4.0+) |
+| `--notify <mode>` | `none` | Local notification on transition INTO `drifting`/`stuck`. Modes: `none`, `bell`, `os`, `both`. (v0.4.2+) |
 
 **Keyboard:**
 
@@ -62,6 +66,7 @@ agentpulse live [options]
 | --- | --- |
 | ↑ ↓ / k j / w s | Move selection |
 | r | Force refresh on selected session |
+| **a** | **Whitelist current session's drift findings** (v0.4.1+) |
 | ? | Toggle help overlay |
 | q / Ctrl-C | Quit |
 
@@ -76,9 +81,48 @@ agentpulse live [options]
 | ⚠ red drifting | Privileged-path access, network exec, or write outside repo |
 | ○ gray idle | Window had activity earlier OR is silent; agent is parked |
 
-## GitHub Action (v0.4.2+)
+## Exception baseline (v0.4.1+)
 
-Drop AgentPulse into a pull-request workflow to gate the build on `drifting` / `stuck` sessions:
+Press `a` on a `drifting` session to whitelist its findings — AgentPulse appends their fingerprints to `<session.cwd>/.agentpulse-exceptions.json`, refreshes the session, and the verdict re-classifies away from `drifting` instantly.
+
+The exception file is a simple JSON list keyed by stable `Finding.fingerprint`:
+
+```json
+{
+  "version": 1,
+  "exceptions": [
+    {
+      "kind": "agent_pulse.live_drift_shell_exfil",
+      "fingerprint": "a1b2c3...",
+      "approvedAt": "2026-05-23T22:00:00.000Z",
+      "note": "approved by user via TUI"
+    }
+  ]
+}
+```
+
+Commit it to your repo. CI gating (`agentpulse live --once --strict` or the GitHub Action) honors the same baseline — the trajectory layer reads it the same way the TUI does.
+
+## Notifications (v0.4.2+)
+
+`--notify <mode>` fires a local notification when any session transitions INTO `drifting` or `stuck`. Useful when you're not actively staring at the TUI.
+
+| Mode | Effect |
+| --- | --- |
+| `none` (default) | Silent |
+| `bell` | Writes `\x07` to stderr (terminal beep) |
+| `os` | Native notification — `osascript` on macOS, `notify-send` on Linux, BurntToast/NotifyIcon on Windows |
+| `both` | Bell + OS |
+
+Trigger policy: fires only on safe-to-alert transitions. `converging → drifting` fires; `drifting → drifting` doesn't (no double-alert); `drifting → idle` doesn't (clearing is silent).
+
+Best-effort: a missing `notify-send` on Linux, or a stripped-down Windows env, is a silent no-op rather than a crash.
+
+## CI integration
+
+Two ways to gate a pipeline on agent state:
+
+### GitHub Action (v0.4.2+)
 
 ```yaml
 - uses: Conalh/AgentPulse@v0.4.2
@@ -88,41 +132,60 @@ Drop AgentPulse into a pull-request workflow to gate the build on `drifting` / `
     comment-on-pr: 'true'
 ```
 
-The action runs `agentpulse live --once` against the provided transcript directory, emits a markdown summary to the GitHub step summary, optionally posts a sticky PR comment, and (with `strict: true`) fails the workflow when any session is in `drifting` or `stuck`. Full input / output reference and an example PR-check workflow live in [`action.yml`](./action.yml) and [`examples/agentpulse-pr-check.yml`](./examples/agentpulse-pr-check.yml).
+The action runs `agentpulse live --once` against the provided transcript directory, emits a markdown summary to the GitHub step summary, optionally posts a sticky PR comment that updates in place across pushes, and (with `strict: true`) fails the workflow when any session is in `drifting` or `stuck`. Full input/output reference in [`action.yml`](./action.yml); a complete PR-check workflow at [`examples/agentpulse-pr-check.yml`](./examples/agentpulse-pr-check.yml).
 
-## `agentpulse recap` — one-shot mode
+### Raw CLI (any CI)
 
-For piping into scripts, CI, or your own dashboards:
+If you're not on GitHub Actions:
+
+```sh
+npx agentpulse@latest live --once --strict --roots <transcript-dir>
+```
+
+Exits 1 if any session is `drifting`/`stuck`. Add `--format json` to pipe a structured snapshot into downstream tools.
+
+### Exception baseline in CI
+
+Commit `.agentpulse-exceptions.json` to your repo — both the Action and the raw CLI read it from the session's cwd. A finding whitelisted via the TUI's `a` key locally stops gating CI too.
+
+## `agentpulse recap` — single-transcript mode
+
+For piping a single transcript into scripts or dashboards (vs. the multi-session discovery the `live` subcommand does):
 
 ```sh
 agentpulse recap --transcript-dir ~/.claude/projects/<your-project>/ --format json
 ```
 
-Same pipeline as `live`, but exits after one run. Use `--watch` for a polling re-emit loop (text or NDJSON).
+Same pipeline, narrower input. Use `--watch` for a polling re-emit loop.
 
 ## What's intentionally NOT in scope
 
 - **No LLM, anywhere.** Not for summarization, not for classification. The whole point is determinism.
-- **No outbound network calls.** Reads your local transcript files, writes to your terminal. That's it.
-- **No web UI / dashboard.** TUI first, possibly a GitHub Action for PR comments later (v0.4). Nothing hosted.
+- **No outbound network calls.** Reads your local transcript files, writes to your terminal (and optionally the local OS notifier). Nothing leaves the machine.
+- **No web UI / hosted dashboard.** TUI for the live view, GitHub Action for PRs, JSON output for everything else. Nothing hosted.
 - **No multi-session memory.** Each invocation reads the window and exits.
+- **No "AI to review AI" loop.** Detectors are deterministic. The trajectory classifier is a rule tree, not a model.
 
 ## Architecture
 
-Five-layer deterministic pipeline. Each layer is pure where it can be; all layers share the `src/types.ts` contract.
+Deterministic pipeline. Each layer is pure where it can be; all layers share the `src/types.ts` contract.
 
 | Layer | File | Input → Output |
 | --- | --- | --- |
-| Parser | `src/parser.ts` | Claude Code / Cursor / Codex JSONL → `TranscriptEvent[]` |
-| Enrichment | `src/enrich.ts` | events → keywords, cwd-relative path clusters, action classes |
-| Outcome | `src/trajectory.ts` | events → verification trend, user tone, completion verbs, idle gap |
-| Trajectory | `src/trajectory.ts` | enrichment + outcome → six-bucket verdict |
-| Narrative | `src/narrative.ts` | verdict → plain-English recap |
+| 1. Parser | `src/parser.ts` | Claude Code / Cursor / Codex JSONL → `TranscriptEvent[]` |
+| 2. Enrichment | `src/enrich.ts` | events → keywords, cwd-relative path clusters, action classes |
+| 2.5. Sequences | `src/sequences.ts` | events → ordered-pattern signal (`tdd_loop` / `stuck_loop` / `refuse_to_verify` / `exploratory_edit`) |
+| 3. Outcome | `src/trajectory.ts` | events → verification trend, user tone, completion verbs, idle gap |
+| 4. Trajectory | `src/trajectory.ts` | enrichment + outcome + sequence + exceptions → six-bucket verdict |
+| 5. Narrative | `src/narrative.ts` | verdict → plain-English recap |
 
 Live infrastructure on top:
 
 - `src/sessions/` — auto-discovery + filesystem watcher
 - `src/orchestrator.ts` — multi-session pulse runner with concurrent-refresh coalescing
+- `src/exceptions.ts` — `.agentpulse-exceptions.json` reader/writer (v0.4.1+)
+- `src/notifications.ts` — bell + cross-platform OS notifications on state transitions (v0.4.2+)
+- `src/once.ts` — headless `--once` runner for CI (v0.4.0+)
 - `src/tui/` — Ink TUI components
 
 ## Principles
