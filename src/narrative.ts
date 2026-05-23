@@ -170,6 +170,49 @@ function renderDone(enriched: EnrichedWindow, outcome: OutcomeSignal): string {
   return parts.join(' ');
 }
 
+function renderIdle(enriched: EnrichedWindow): string {
+  // Find the freshness from the events directly — the trajectory layer
+  // already computed this, but the narrative renderer doesn't take the
+  // outcome's freshness as input, so we recompute it from the enriched
+  // window. Cheap.
+  let lastEventMs = 0;
+  for (const ev of enriched.events) {
+    if (typeof ev.timestamp === 'number' && ev.timestamp > lastEventMs) {
+      lastEventMs = ev.timestamp;
+    }
+  }
+  const freshnessMs =
+    lastEventMs > 0 ? enriched.windowEnd - lastEventMs : enriched.durationMs;
+
+  const editCount = enriched.actionCounts.editing ?? 0;
+  const primaryFile = tick(enriched.primaryFiles[0]);
+  const cluster = tick(topCluster(enriched.pathClusters));
+
+  const parts: string[] = [
+    'Your agent has been quiet for **' + humanDuration(freshnessMs) + '**.',
+  ];
+  if (editCount > 0 && primaryFile) {
+    parts.push(
+      'Earlier in the window it made **' + editCount + '** ' +
+        (editCount === 1 ? 'change' : 'changes') + ' to **' + primaryFile + '** before going idle.'
+    );
+  } else if (editCount > 0 && cluster) {
+    parts.push(
+      'Earlier in the window it made **' + editCount + '** ' +
+        (editCount === 1 ? 'change' : 'changes') + ' under **' + cluster + '** before going idle.'
+    );
+  } else if (editCount > 0) {
+    parts.push(
+      'Earlier in the window it made **' + editCount + '** ' +
+        (editCount === 1 ? 'change' : 'changes') + ' before going idle.'
+    );
+  } else if (cluster) {
+    parts.push('Earlier in the window it was reading around **' + cluster + '**.');
+  }
+  parts.push('Likely parked, waiting on you or external input.');
+  return parts.join(' ');
+}
+
 function renderDrifting(enriched: EnrichedWindow, verdict: TrajectoryVerdict): string {
   const duration = humanDuration(enriched.durationMs);
   const driftCount = verdict.drifts.length;
@@ -206,6 +249,9 @@ export function renderRecap(
       break;
     case 'drifting':
       body = renderDrifting(enriched, verdict);
+      break;
+    case 'idle':
+      body = renderIdle(enriched);
       break;
     default:
       body = 'Your agent has been working for **' + humanDuration(enriched.durationMs) + '**.';

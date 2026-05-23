@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.6] — 2026-05-23
+
+### Added
+
+- **`idle` trajectory bucket.** Sessions whose window contains historical activity but whose most recent event is older than 5 minutes now classify as `idle` instead of misleadingly reading `converging`. This was a real product-shape issue: a session that made 15 edits 18 minutes ago and then went quiet was being reported as "currently working" because the 20-minute window captures the whole stretch. The bucket order is now: `drifting → idle → done → stuck → converging → exploring → fallback`. Drift findings still win because they're worth surfacing even when the agent has gone quiet.
+- Theme: `idle` uses gray with the `○` (open circle) pill — distinguishable from converging's filled `●`, exploring's half `◐`, and done's `■`. Reads as "empty / waiting".
+- Narrative for `idle` bucket: "Your agent has been quiet for **N minutes**. Earlier in the window it made **X** changes to **`file`** before going idle. Likely parked, waiting on you or external input."
+
+### Fixed
+
+- **Lingering `C--` rows in the dashboard.** The slug decoder's last-ditch fallback was returning the original slug when stripping the `<letter>--` prefix left nothing meaningful. Now returns `undefined` in that case so the UI's own `session-<id-prefix>` fallback kicks in. Pre-fix: a row literally labeled `C--`. Post-fix: `session-3f4a82c1` or similar — stable, never blank.
+
+### Tests
+
+85 (was 82). Three new tests on the idle bucket: idle fires on stale activity, doesn't fire on fresh activity, doesn't fire when a completion verb was emitted (done wins).
+
 ## [0.2.5] — 2026-05-23
 
 ### Fixed

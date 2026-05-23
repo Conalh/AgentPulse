@@ -382,6 +382,27 @@ function firstEditedFile(enriched: EnrichedWindow): string | null {
   return enriched.primaryFiles[0] ?? null;
 }
 
+/**
+ * v0.2.6: how stale the most recent event can be before we flip the verdict
+ * to `idle`. 5 minutes is short enough that an actively-running agent always
+ * registers as active (refresh happens every 30s by default, so the window
+ * gets new events well before this threshold), and long enough that brief
+ * thinking pauses don't flicker the verdict between converging and idle.
+ */
+const IDLE_FRESHNESS_THRESHOLD_MS = 5 * 60 * 1000;
+
+/** Find the most recent event timestamp in the window. Returns 0 when the
+ *  window has no events. */
+function mostRecentEventMs(enriched: EnrichedWindow): number {
+  let max = 0;
+  for (const ev of enriched.events) {
+    if (typeof ev.timestamp === 'number' && ev.timestamp > max) {
+      max = ev.timestamp;
+    }
+  }
+  return max;
+}
+
 export function classifyTrajectory(
   enriched: EnrichedWindow,
   outcome: OutcomeSignal,
@@ -391,7 +412,8 @@ export function classifyTrajectory(
   const exploration = enriched.actionCounts.exploration ?? 0;
   const cluster = topClusterShare(enriched.pathClusters);
 
-  // 1. Drifting — first priority. Detectors are on by default.
+  // 1. Drifting — first priority. Detectors are on by default. Drift findings
+  //    are worth surfacing even if the agent has technically gone quiet.
   if (opts?.detectorsEnabled !== false) {
     const { drifts, signals } = detectDrifts(enriched.events);
     if (drifts.length > 0) {
@@ -399,7 +421,34 @@ export function classifyTrajectory(
     }
   }
 
-  // 2. Done — completion verb + idle gap + not actively being corrected.
+  // 2. Idle (v0.2.6) — window has activity but the most recent event is more
+  //    than 5 minutes old AND no completion verb was emitted. This is the
+  //    "parked" state: session did work earlier in the window then stopped,
+  //    usually because the human is doing something else (waiting on review,
+  //    swapped to another task, etc.). Distinguishes it from `converging`,
+  //    which implies the agent is *currently* doing the work.
+  //
+  //    If a completion verb WAS emitted, fall through to rule 3 (`done`)
+  //    which is the more specific "the agent signed off" state.
+  const lastEventMs = mostRecentEventMs(enriched);
+  const freshnessMs = lastEventMs > 0 ? enriched.windowEnd - lastEventMs : Infinity;
+  if (
+    enriched.toolInvocationCount > 0 &&
+    freshnessMs > IDLE_FRESHNESS_THRESHOLD_MS &&
+    !outcome.completionVerbsRecent
+  ) {
+    const signals: string[] = [
+      `last activity ${formatMs(freshnessMs)} ago`,
+      `${enriched.toolInvocationCount} tool invocation${enriched.toolInvocationCount === 1 ? '' : 's'} earlier in the window`,
+    ];
+    if (editing > 0) signals.push(`${editing} edit${editing === 1 ? '' : 's'} before going quiet`);
+    if (cluster.top && cluster.share >= 0.5) {
+      signals.push(`focus was on ${cluster.top}`);
+    }
+    return makeVerdict('idle', 0.75, signals.slice(0, 4), []);
+  }
+
+  // 3. Done — completion verb + idle gap + not actively being corrected.
   if (
     outcome.completionVerbsRecent &&
     outcome.idleGapMs > 60_000 &&

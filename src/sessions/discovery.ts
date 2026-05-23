@@ -111,11 +111,14 @@ export function deriveProjectName(
   }
 
   // Last resort when even cwd doesn't help: return the slug minus the drive
-  // prefix so the user sees something meaningful (or the original slug if
-  // there's nothing else to fall back on).
+  // prefix if it leaves something meaningful. v0.2.6: previously this fell
+  // back to the *original* slug when stripping emptied it out, which is how
+  // raw `C--` rows still surfaced in the dashboard. Now: when even the
+  // stripped slug is empty, return undefined so the UI falls through to
+  // its own `session-<id-prefix>` fallback rather than showing junk.
   if (looksJunky && slug) {
     const stripped = slug.replace(/^[a-z]--+/i, '');
-    return stripped || slug;
+    return stripped.length > 0 ? stripped : undefined;
   }
 
   return decoded || undefined;

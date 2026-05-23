@@ -134,7 +134,11 @@ export type TrajectoryBucket =
   | 'exploring'    // wide reads, no edits yet, user hasn't given direction
   | 'stuck'        // many edits, verifications not improving, user re-asking
   | 'done'         // completion signal + idle gap
-  | 'drifting';    // gov-suite detectors firing in the live window
+  | 'drifting'     // gov-suite detectors firing in the live window
+  | 'idle';        // window has historical activity but nothing fresh — agent
+                   // is parked (waiting on the human, on review, on external
+                   // input). v0.2.6 addition: distinguishes "still actively
+                   // working" from "did 15 edits 18 minutes ago and stopped".
 
 export interface TrajectoryVerdict {
   bucket: TrajectoryBucket;

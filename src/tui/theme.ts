@@ -15,6 +15,10 @@ const COLORS: Record<TrajectoryBucket, BucketColor> = {
   stuck: 'yellow',
   done: 'blue',
   drifting: 'red',
+  // v0.2.6: idle shares the gray family with exploring but uses a distinct
+  // pill so the at-a-glance read is "this session is parked" rather than
+  // "this session is researching".
+  idle: 'gray',
 };
 
 const PILLS: Record<TrajectoryBucket, string> = {
@@ -23,6 +27,9 @@ const PILLS: Record<TrajectoryBucket, string> = {
   stuck: '▲',
   done: '■',
   drifting: '⚠',
+  // Open circle — distinguishable from converging's filled ●, exploring's
+  // half ◐, and done's square ■. Reads as "empty / waiting".
+  idle: '○',
 };
 
 export function colorFor(bucket: TrajectoryBucket): BucketColor {

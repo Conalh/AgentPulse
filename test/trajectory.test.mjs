@@ -333,3 +333,69 @@ test('classifyTrajectory: fallback — ambiguous window → low-confidence explo
   assert.ok(verdict.confidence < 0.5, `expected low confidence, got ${verdict.confidence}`);
   assert.ok(verdict.signals.length >= 2);
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// Layer 4 — idle bucket (v0.2.6)
+// ─────────────────────────────────────────────────────────────────────
+
+test('classifyTrajectory: idle — window had activity but last event > 5 min ago', () => {
+  // Events all happened in the first 5 minutes of a 20-minute window, then
+  // silence. The session is parked.
+  const events = [
+    toolUse(T0 + 1000, 'Edit', { file_path: 'src/auth/session.ts' }),
+    toolUse(T0 + 2000, 'Edit', { file_path: 'src/auth/session.ts' }),
+    toolUse(T0 + 3000, 'Edit', { file_path: 'src/auth/session.ts' }),
+  ];
+  const enriched = makeWindow({
+    events,
+    actionCounts: { editing: 3 },
+    primaryFiles: ['src/auth/session.ts'],
+    pathClusters: { 'src/auth': 3 },
+    toolInvocationCount: 3,
+  });
+  const verdict = classifyTrajectory(enriched, readOutcomeSignal(enriched));
+  assert.equal(verdict.bucket, 'idle');
+  assert.ok(verdict.confidence >= 0.5);
+  assert.ok(verdict.signals.some((s) => s.includes('last activity')));
+});
+
+test('classifyTrajectory: NOT idle when last event was within 5 min of windowEnd', () => {
+  // Fresh activity at the end of the window — should classify as converging
+  // (heavy editing, no verification fallback rule).
+  const fresh = T0 + 20 * 60 * 1000 - 30_000; // 30s before windowEnd
+  const events = [
+    toolUse(T0 + 1000, 'Edit', { file_path: 'src/auth/session.ts' }),
+    toolUse(T0 + 2000, 'Edit', { file_path: 'src/auth/session.ts' }),
+    toolUse(T0 + 3000, 'Edit', { file_path: 'src/auth/session.ts' }),
+    toolUse(T0 + 4000, 'Edit', { file_path: 'src/auth/session.ts' }),
+    toolUse(fresh, 'Edit', { file_path: 'src/auth/session.ts' }),
+  ];
+  const enriched = makeWindow({
+    events,
+    actionCounts: { editing: 5 },
+    primaryFiles: ['src/auth/session.ts'],
+    pathClusters: { 'src/auth': 5 },
+    toolInvocationCount: 5,
+  });
+  const verdict = classifyTrajectory(enriched, readOutcomeSignal(enriched));
+  assert.notEqual(verdict.bucket, 'idle');
+});
+
+test('classifyTrajectory: completion verb beats idle (stale window with completion → done, not idle)', () => {
+  // The agent did work, said "all done!", then went quiet. That's `done`,
+  // not `idle` — the explicit signoff is more specific than passive silence.
+  const events = [
+    toolUse(T0 + 1000, 'Edit', { file_path: 'src/auth/session.ts' }),
+    assistantMsg(T0 + 2000, 'All done! Tests pass.'),
+    userMsg(T0 + 2500, 'thanks!'),
+  ];
+  const enriched = makeWindow({
+    events,
+    actionCounts: { editing: 1 },
+    primaryFiles: ['src/auth/session.ts'],
+    toolInvocationCount: 1,
+    userMessageCount: 1,
+  });
+  const verdict = classifyTrajectory(enriched, readOutcomeSignal(enriched));
+  assert.equal(verdict.bucket, 'done');
+});
