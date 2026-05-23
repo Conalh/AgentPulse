@@ -84,6 +84,11 @@ export function createOrchestrator(
         transcriptDir: state.session.transcriptPath,
         windowMs,
         detectorsEnabled,
+        // v0.2.5: the orchestrator is used by the TUI; we must suppress
+        // parser warnings here because console.warn writes interfere with
+        // Ink's screen redraw and cause whole-window flicker on every
+        // 30-second refresh tick.
+        silent: true,
       });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);

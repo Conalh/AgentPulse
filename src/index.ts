@@ -41,6 +41,10 @@ export interface PulseOptions {
   repoRoot?: string;
   /** Enable gov-suite detectors for the drifting bucket. Default: true. */
   detectorsEnabled?: boolean;
+  /** Suppress parser warnings (skipped malformed lines). The TUI sets this
+   *  to true on every refresh to avoid `console.warn` interfering with
+   *  Ink's screen redraw. Default: false. */
+  silent?: boolean;
 }
 
 export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
@@ -51,6 +55,7 @@ export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
   const events = await parseTranscript(opts.transcriptDir, {
     since: startAt,
     until: endAt,
+    silent: opts.silent,
   });
 
   const enriched = enrichWindow(events, startAt, endAt);

@@ -174,6 +174,10 @@ export interface ParseOptions {
   since?: number;
   /** Filter to events at or before this epoch ms. */
   until?: number;
+  /** Suppress the "skipped N malformed lines" warning. The TUI sets this to
+   *  true on every refresh because `console.warn` writes interfere with
+   *  Ink's screen redraw and cause whole-window flicker. v0.2.5 addition. */
+  silent?: boolean;
 }
 
 export interface EnrichOptions {

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.5] — 2026-05-23
+
+### Fixed
+
+- **Whole-window flicker on every refresh tick.** Tracked it down to the parser's `console.warn("skipped N malformed lines")` — those writes interfere with Ink's screen-control sequences and cause a visible redraw flash each time the orchestrator refreshes a session (every 30s by default). The parser now accepts a `silent` flag in `ParseOptions`; `pulse()` forwards a `silent` option; the orchestrator passes `silent: true` on every invocation. The `recap` CLI still surfaces the skip count because there's no TUI to disrupt.
+
+- **Cluster too shallow** — `top cluster C:/Dev covers 99% of activity` was useless because every project sat under that umbrella. The path clusterer now strips each event's `cwd` prefix before bucketing, so `C:/Dev/fit-ontology/utils/foo.py` clusters as `utils` instead of `C:/Dev`. Files outside the session's cwd retain absolute-path clustering (they're interesting in their own right). Files at the project root render as `(project root)` rather than `.` for narrative readability.
+
+### Tests
+
+82 (was 80). Two new regression tests on the cwd-aware clustering (Windows backslash + mixed-cwd scenarios).
+
 ## [0.2.4] — 2026-05-23
 
 ### Added

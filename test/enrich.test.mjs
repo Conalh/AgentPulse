@@ -17,13 +17,30 @@ const userMsg = (offset, text) => ({
   text,
 });
 
-const toolUse = (offset, toolName, toolInput, runtime = 'claude-code') => ({
-  timestamp: T0 + offset,
-  runtime,
-  kind: 'tool_use',
-  toolName,
-  toolInput,
-});
+const toolUse = (offset, toolName, toolInput, cwdOrRuntime, runtime = 'claude-code') => {
+  // Backwards-compat: callers that used `(offset, name, input, runtime)`
+  // (where the 4th arg was the runtime string) still work. New callers can
+  // pass `(offset, name, input, cwd)` or `(offset, name, input, cwd, runtime)`.
+  let cwd;
+  let rt = runtime;
+  if (typeof cwdOrRuntime === 'string') {
+    // Heuristic: a runtime is one of three short tokens; anything else looks
+    // like a path/cwd.
+    if (cwdOrRuntime === 'claude-code' || cwdOrRuntime === 'cursor' || cwdOrRuntime === 'codex') {
+      rt = cwdOrRuntime;
+    } else {
+      cwd = cwdOrRuntime;
+    }
+  }
+  return {
+    timestamp: T0 + offset,
+    runtime: rt,
+    kind: 'tool_use',
+    toolName,
+    toolInput,
+    ...(cwd !== undefined ? { cwd } : {}),
+  };
+};
 
 const WSTART = T0;
 const WEND = T0 + 60 * 60 * 1000; // 1 hour window
@@ -75,7 +92,44 @@ test('path clusters: handles deeper paths and windows paths', () => {
   const e = enrichWindow(events, WSTART, WEND);
 
   assert.equal(e.pathClusters['tests/unit'], 2);
-  assert.equal(e.pathClusters['.'], 1);
+  // v0.2.5: bare-filename paths bucket as `(project root)` for readability
+  // in narratives. Was `.`, but `.` reads weirdly in "focused on .".
+  assert.equal(e.pathClusters['(project root)'], 1);
+});
+
+// v0.2.5 regression: per-event cwd should strip from the cluster key so
+// absolute paths under the session cwd bucket by project-relative dirs.
+test('path clusters: strip per-event cwd so absolute paths cluster by relative subdirs', () => {
+  const cwd = 'C:/Dev/fit-ontology';
+  const events = [
+    toolUse(100, 'Edit', { file_path: 'C:/Dev/fit-ontology/app.py' }, cwd),
+    toolUse(200, 'Edit', { file_path: 'C:/Dev/fit-ontology/utils/foo.py' }, cwd),
+    toolUse(300, 'Edit', { file_path: 'C:/Dev/fit-ontology/utils/bar.py' }, cwd),
+    toolUse(400, 'Read', { file_path: 'C:/Dev/fit-ontology/src/api/x.py' }, cwd),
+    // File outside cwd — should NOT be stripped, keeps absolute clustering.
+    toolUse(500, 'Read', { file_path: 'C:/Dev/other/foo.py' }, cwd),
+  ];
+
+  const e = enrichWindow(events, WSTART, WEND);
+
+  // Project-relative buckets:
+  assert.equal(e.pathClusters['(project root)'], 1); // app.py at root
+  assert.equal(e.pathClusters['utils'], 2);
+  assert.equal(e.pathClusters['src/api'], 1);
+  // File outside cwd retains absolute-path top-2-segment clustering:
+  // `C:/Dev/other/foo.py` → parts `['C:', 'Dev', 'other', 'foo.py']`,
+  // dirParts `['C:', 'Dev', 'other']`, top-2 → `C:/Dev`.
+  assert.equal(e.pathClusters['C:/Dev'], 1);
+});
+
+test('path clusters: backslash cwd on Windows still strips correctly', () => {
+  const cwd = 'C:\\Dev\\fit-ontology';
+  const events = [
+    toolUse(100, 'Edit', { file_path: 'C:\\Dev\\fit-ontology\\utils\\foo.py' }, cwd),
+    toolUse(200, 'Edit', { file_path: 'C:\\Dev\\fit-ontology\\utils\\bar.py' }, cwd),
+  ];
+  const e = enrichWindow(events, WSTART, WEND);
+  assert.equal(e.pathClusters['utils'], 2);
 });
 
 // ── 3. Action classification ────────────────────────────────────────

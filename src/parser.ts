@@ -61,10 +61,15 @@ export async function parseTranscript(
     totalLines += lines;
   }
 
-  if (totalSkipped > 0) {
+  if (totalSkipped > 0 && !opts.silent) {
     // Single aggregate warning — we don't want to spam per-line. Counting
     // is the difference between an audit user noticing partial data and
     // silently trusting a half-parsed file.
+    //
+    // v0.2.5: the TUI passes opts.silent === true because `console.warn`
+    // writes disrupt Ink's screen control and cause whole-window flicker on
+    // every refresh tick. The `recap` CLI leaves silent unset so its
+    // one-shot output still surfaces the skip count.
     // eslint-disable-next-line no-console
     console.warn(
       `[agentpulse:parser] skipped ${totalSkipped} malformed line(s) out of ${totalLines} across ${files.length} file(s)`

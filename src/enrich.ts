@@ -84,17 +84,48 @@ function getFilePath(toolInput: Record<string, unknown> | undefined): string | u
 }
 
 /**
- * Normalize a path to forward slashes and bucket by the top-2-level parent
- * directory of the file. e.g. `src/auth/middleware.ts` → `src/auth`,
- * `tests/unit/foo.test.ts` → `tests/unit`, `single.ts` → `.`.
+ * Bucket a file path by its top-2-segment parent directory.
+ *
+ * v0.2.5: when an event's `cwd` is provided, the cwd prefix is stripped
+ * first so absolute paths cluster by their *project-relative* directory
+ * rather than by their absolute path prefix. Pre-fix, every session
+ * working under `C:/Dev/<project>/...` showed `top cluster C:/Dev covers
+ * 99%`, which is useless because the umbrella directory tells you nothing
+ * about what the agent is focused on.
+ *
+ * Examples (cwd = `C:/Dev/fit-ontology`):
+ *   `C:/Dev/fit-ontology/app.py`           → `(project root)`
+ *   `C:/Dev/fit-ontology/utils/foo.py`     → `utils`
+ *   `C:/Dev/fit-ontology/src/api/foo.py`   → `src/api`
+ *   `C:/Dev/other-project/foo.py`          → `C:/Dev/other-project` (no strip — outside cwd)
+ *
+ * No cwd (or cwd doesn't match):
+ *   `src/auth/middleware.ts`               → `src/auth`
+ *   `tests/unit/foo.test.ts`               → `tests/unit`
+ *   `single.ts`                            → `(project root)`
  */
-function pathClusterKey(filePath: string): string {
-  const norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+function pathClusterKey(filePath: string, cwd: string | undefined): string {
+  let norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+
+  if (cwd) {
+    const cwdNorm = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
+    if (cwdNorm.length > 0) {
+      const prefix = cwdNorm + '/';
+      // Case-insensitive comparison handles Windows drive-letter casing
+      // (`C:/Dev` vs `c:/Dev`) without lower-casing the actual path slice
+      // that we return.
+      if (norm.toLowerCase().startsWith(prefix.toLowerCase())) {
+        norm = norm.slice(prefix.length);
+      } else if (norm.toLowerCase() === cwdNorm.toLowerCase()) {
+        return '(project root)';
+      }
+    }
+  }
+
   const parts = norm.split('/').filter((p) => p.length > 0);
-  // Drop the filename (last segment).
-  if (parts.length <= 1) return '.';
+  if (parts.length <= 1) return '(project root)';
   const dirParts = parts.slice(0, -1);
-  if (dirParts.length === 0) return '.';
+  if (dirParts.length === 0) return '(project root)';
   if (dirParts.length === 1) return dirParts[0]!;
   return `${dirParts[0]}/${dirParts[1]}`;
 }
@@ -269,7 +300,10 @@ export function enrichWindow(
 
     const fp = getFilePath(e.toolInput);
     if (fp) {
-      const cluster = pathClusterKey(fp);
+      // v0.2.5: per-event cwd lets cluster keys be project-relative, so a
+      // session working entirely under `C:/Dev/foo/` clusters by its
+      // subdirectories instead of by the absolute umbrella path.
+      const cluster = pathClusterKey(fp, e.cwd);
       pathClusters[cluster] = (pathClusters[cluster] ?? 0) + 1;
     }
 
