@@ -421,31 +421,44 @@ export function classifyTrajectory(
     }
   }
 
-  // 2. Idle (v0.2.6) — window has activity but the most recent event is more
-  //    than 5 minutes old AND no completion verb was emitted. This is the
-  //    "parked" state: session did work earlier in the window then stopped,
-  //    usually because the human is doing something else (waiting on review,
-  //    swapped to another task, etc.). Distinguishes it from `converging`,
-  //    which implies the agent is *currently* doing the work.
+  // 2. Idle — the most recent event is more than 5 minutes old AND no
+  //    completion verb was emitted.
+  //
+  //    v0.2.7 widened: previously this required `toolInvocationCount > 0`,
+  //    so a totally-silent window fell through to the "no decisive signal"
+  //    exploring fallback. That was backwards — an empty window is the
+  //    CLEAREST case of idle, not the most ambiguous. Now fires for both:
+  //      - empty windows (no events at all → freshness is Infinity)
+  //      - stale windows (had activity earlier, none in last 5 min)
+  //
+  //    Confidence is higher for empty windows (we KNOW nothing's happening)
+  //    than for the had-activity-then-stopped case (could be a brief pause).
   //
   //    If a completion verb WAS emitted, fall through to rule 3 (`done`)
   //    which is the more specific "the agent signed off" state.
   const lastEventMs = mostRecentEventMs(enriched);
   const freshnessMs = lastEventMs > 0 ? enriched.windowEnd - lastEventMs : Infinity;
-  if (
-    enriched.toolInvocationCount > 0 &&
-    freshnessMs > IDLE_FRESHNESS_THRESHOLD_MS &&
-    !outcome.completionVerbsRecent
-  ) {
-    const signals: string[] = [
-      `last activity ${formatMs(freshnessMs)} ago`,
-      `${enriched.toolInvocationCount} tool invocation${enriched.toolInvocationCount === 1 ? '' : 's'} earlier in the window`,
-    ];
-    if (editing > 0) signals.push(`${editing} edit${editing === 1 ? '' : 's'} before going quiet`);
-    if (cluster.top && cluster.share >= 0.5) {
-      signals.push(`focus was on ${cluster.top}`);
+  if (freshnessMs > IDLE_FRESHNESS_THRESHOLD_MS && !outcome.completionVerbsRecent) {
+    const signals: string[] = [];
+    const isEmpty = enriched.toolInvocationCount === 0 && enriched.userMessageCount === 0;
+    if (isEmpty) {
+      signals.push('no events in the window at all');
+    } else {
+      signals.push(`last activity ${formatMs(freshnessMs)} ago`);
+      if (enriched.toolInvocationCount > 0) {
+        signals.push(
+          `${enriched.toolInvocationCount} tool invocation${enriched.toolInvocationCount === 1 ? '' : 's'} earlier in the window`
+        );
+      }
+      if (editing > 0) {
+        signals.push(`${editing} edit${editing === 1 ? '' : 's'} before going quiet`);
+      }
+      if (cluster.top && cluster.share >= 0.5) {
+        signals.push(`focus was on ${cluster.top}`);
+      }
     }
-    return makeVerdict('idle', 0.75, signals.slice(0, 4), []);
+    // Higher confidence on truly-empty windows — we have unambiguous data.
+    return makeVerdict('idle', isEmpty ? 0.85 : 0.75, signals.slice(0, 4), []);
   }
 
   // 3. Done — completion verb + idle gap + not actively being corrected.

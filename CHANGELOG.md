@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.7] — 2026-05-23
+
+### Fixed
+
+- **Idle rule wasn't catching empty windows.** v0.2.6 added the idle bucket but gated it on `toolInvocationCount > 0` — meaning it only fired when the window had *some* activity earlier. A session that had been completely silent for 30 minutes (window has zero events) fell through to the 0.3-confidence "no decisive signal → exploring" fallback. That was backwards: a totally-empty window is the *clearest* case of idle, not the most ambiguous. The idle rule now fires for both cases:
+  - **Empty windows** (no events at all) → idle at 0.85 confidence with signal `"no events in the window at all"`
+  - **Stale windows** (had activity earlier but nothing in last 5 min) → idle at 0.75 confidence
+- Narrative now distinguishes the two: empty-window idle reads "Your agent has been quiet for the whole 20-minute window. No tool calls, no messages. Likely parked, waiting on you or external input." Stale-window idle keeps the "earlier in the window it made X changes before going idle" framing.
+
+### Test fixtures updated
+
+The pre-v0.2.7 trajectory tests used `T0 + small offsets` for synthetic events, which put them ~19 minutes before windowEnd. The widened idle rule correctly identified those as stale and pre-empted the bucket the tests were verifying. Updated the converging / stuck / exploring / "NOT done" tests to use a `FRESH = WINDOW_END - 2min` anchor so synthetic events look fresh — which matches how real agent sessions actually shape their event timing. Idle-specific tests still use `T0 + offset` (genuinely stale).
+
+### Tests
+
+85, same count as v0.2.6, but the empty-window assertion now expects `idle` instead of `exploring`.
+
 ## [0.2.6] — 2026-05-23
 
 ### Added

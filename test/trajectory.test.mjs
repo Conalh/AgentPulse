@@ -19,12 +19,20 @@ import {
 // ─────────────────────────────────────────────────────────────────────
 
 const T0 = 1_700_000_000_000;
+const WINDOW_DURATION_MS = 20 * 60 * 1000;
+const WINDOW_END = T0 + WINDOW_DURATION_MS;
+// v0.2.7: tests that want events to look FRESH (within the 5-min idle
+// threshold so they classify by shape rather than getting overridden by
+// idle) should use FRESH + offset. Tests that want STALE events (testing
+// the idle rule explicitly) use T0 + offset, which is ~20 min before the
+// window's end.
+const FRESH = WINDOW_END - 2 * 60 * 1000; // 2 min before windowEnd
 
 /** Build an EnrichedWindow literal with sensible defaults. */
 function makeWindow(overrides = {}) {
   const events = overrides.events ?? [];
   const windowStart = overrides.windowStart ?? T0;
-  const windowEnd = overrides.windowEnd ?? T0 + 20 * 60 * 1000;
+  const windowEnd = overrides.windowEnd ?? WINDOW_END;
   return {
     events,
     windowStart,
@@ -146,11 +154,14 @@ test('readOutcomeSignal: textual pass/fail patterns work without exit codes', ()
 // ─────────────────────────────────────────────────────────────────────
 
 test('classifyTrajectory: converging — edits + improving tests + tight cluster', () => {
+  // v0.2.7: events must be FRESH (within 5 min of windowEnd) or the idle
+  // rule pre-empts converging. Real sessions actively running have fresh
+  // events; only synthetic fixtures need this care.
   const events = [
-    toolUse(T0 + 1000, 'Edit', { file_path: 'src/auth/session.ts' }),
-    toolUse(T0 + 2000, 'Edit', { file_path: 'src/auth/session.ts' }),
-    bashEvent(T0 + 3000, 'npm test', { exitCode: 1, resultText: 'FAIL' }),
-    bashEvent(T0 + 4000, 'npm test', { exitCode: 0, resultText: 'PASS' }),
+    toolUse(FRESH + 1000, 'Edit', { file_path: 'src/auth/session.ts' }),
+    toolUse(FRESH + 2000, 'Edit', { file_path: 'src/auth/session.ts' }),
+    bashEvent(FRESH + 3000, 'npm test', { exitCode: 1, resultText: 'FAIL' }),
+    bashEvent(FRESH + 4000, 'npm test', { exitCode: 0, resultText: 'PASS' }),
   ];
   const enriched = makeWindow({
     events,
@@ -171,11 +182,11 @@ test('classifyTrajectory: converging — edits + improving tests + tight cluster
 
 test('classifyTrajectory: exploring — many reads, no edits', () => {
   const events = [
-    toolUse(T0 + 1000, 'Read', { file_path: 'src/a.ts' }),
-    toolUse(T0 + 2000, 'Read', { file_path: 'src/b.ts' }),
-    toolUse(T0 + 3000, 'Grep', { pattern: 'foo' }),
-    toolUse(T0 + 4000, 'Glob', { pattern: '**/*.ts' }),
-    userMsg(T0 + 5000, 'where is the session handler defined?'),
+    toolUse(FRESH + 1000, 'Read', { file_path: 'src/a.ts' }),
+    toolUse(FRESH + 2000, 'Read', { file_path: 'src/b.ts' }),
+    toolUse(FRESH + 3000, 'Grep', { pattern: 'foo' }),
+    toolUse(FRESH + 4000, 'Glob', { pattern: '**/*.ts' }),
+    userMsg(FRESH + 5000, 'where is the session handler defined?'),
   ];
   const enriched = makeWindow({
     events,
@@ -193,12 +204,12 @@ test('classifyTrajectory: exploring — many reads, no edits', () => {
 
 test('classifyTrajectory: stuck — many edits, flat_fail, correcting user', () => {
   const events = [
-    toolUse(T0 + 1000, 'Edit', { file_path: 'src/x.ts' }),
-    toolUse(T0 + 2000, 'Edit', { file_path: 'src/x.ts' }),
-    toolUse(T0 + 3000, 'Edit', { file_path: 'src/x.ts' }),
-    bashEvent(T0 + 4000, 'npm test', { exitCode: 1, resultText: 'FAIL' }),
-    bashEvent(T0 + 5000, 'npm test', { exitCode: 1, resultText: 'FAIL' }),
-    userMsg(T0 + 6000, 'no, that is still wrong'),
+    toolUse(FRESH + 1000, 'Edit', { file_path: 'src/x.ts' }),
+    toolUse(FRESH + 2000, 'Edit', { file_path: 'src/x.ts' }),
+    toolUse(FRESH + 3000, 'Edit', { file_path: 'src/x.ts' }),
+    bashEvent(FRESH + 4000, 'npm test', { exitCode: 1, resultText: 'FAIL' }),
+    bashEvent(FRESH + 5000, 'npm test', { exitCode: 1, resultText: 'FAIL' }),
+    userMsg(FRESH + 6000, 'no, that is still wrong'),
   ];
   const enriched = makeWindow({
     events,
@@ -234,12 +245,12 @@ test('classifyTrajectory: done — completion verb + idle gap', () => {
 
 test('classifyTrajectory: NOT done when user replies "no" after completion verb', () => {
   const events = [
-    toolUse(T0 + 1000, 'Edit', { file_path: 'src/z.ts' }),
-    toolUse(T0 + 2000, 'Edit', { file_path: 'src/z.ts' }),
-    toolUse(T0 + 3000, 'Edit', { file_path: 'src/z.ts' }),
-    bashEvent(T0 + 3500, 'npm test', { exitCode: 1, resultText: 'FAIL' }),
-    assistantMsg(T0 + 4000, "Done — fixed it."),
-    userMsg(T0 + 5000, 'no, still broken'),
+    toolUse(FRESH + 1000, 'Edit', { file_path: 'src/z.ts' }),
+    toolUse(FRESH + 2000, 'Edit', { file_path: 'src/z.ts' }),
+    toolUse(FRESH + 3000, 'Edit', { file_path: 'src/z.ts' }),
+    bashEvent(FRESH + 3500, 'npm test', { exitCode: 1, resultText: 'FAIL' }),
+    assistantMsg(FRESH + 4000, "Done — fixed it."),
+    userMsg(FRESH + 5000, 'no, still broken'),
   ];
   const enriched = makeWindow({
     events,
@@ -324,14 +335,18 @@ test('classifyTrajectory: detectorsEnabled:false suppresses drift bucket', () =>
 // Layer 4 — fallback
 // ─────────────────────────────────────────────────────────────────────
 
-test('classifyTrajectory: fallback — ambiguous window → low-confidence exploring', () => {
-  // Empty window: no events at all. Nothing should match converging/stuck/done
-  // (no completion verb, no edits, no improving tests, no exploration count).
+test('classifyTrajectory: empty window → idle (v0.2.7 widening)', () => {
+  // Empty window: no events at all. Pre-v0.2.7 this fell through to the
+  // 0.3-confidence exploring fallback ("no decisive signal"). That was
+  // backwards — a session with zero events in 20 minutes is the CLEAREST
+  // case of idle, not the most ambiguous. The idle rule was widened to
+  // fire on empty windows at higher confidence (0.85 vs 0.75 for the
+  // had-activity-then-stale case).
   const enriched = makeWindow();
   const verdict = classifyTrajectory(enriched, readOutcomeSignal(enriched));
-  assert.equal(verdict.bucket, 'exploring');
-  assert.ok(verdict.confidence < 0.5, `expected low confidence, got ${verdict.confidence}`);
-  assert.ok(verdict.signals.length >= 2);
+  assert.equal(verdict.bucket, 'idle');
+  assert.ok(verdict.confidence >= 0.5, `expected high confidence, got ${verdict.confidence}`);
+  assert.ok(verdict.signals.some((s) => s.includes('no events in the window')));
 });
 
 // ─────────────────────────────────────────────────────────────────────

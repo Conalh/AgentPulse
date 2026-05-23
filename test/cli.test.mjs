@@ -100,7 +100,7 @@ test('CLI: valid args run the full pipeline against an empty transcript dir', ()
     const recap = JSON.parse(r.stdout);
     assert.ok(recap.verdict, 'recap.verdict missing');
     assert.ok(
-      ['exploring', 'done', 'converging', 'stuck', 'drifting'].includes(recap.verdict.bucket),
+      ['exploring', 'done', 'converging', 'stuck', 'drifting', 'idle'].includes(recap.verdict.bucket),
       `unexpected bucket: ${recap.verdict.bucket}`
     );
     assert.equal(typeof recap.narrative, 'string');

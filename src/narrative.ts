@@ -187,6 +187,19 @@ function renderIdle(enriched: EnrichedWindow): string {
   const editCount = enriched.actionCounts.editing ?? 0;
   const primaryFile = tick(enriched.primaryFiles[0]);
   const cluster = tick(topCluster(enriched.pathClusters));
+  const isEmptyWindow =
+    enriched.toolInvocationCount === 0 && enriched.userMessageCount === 0;
+
+  // Truly-empty window: no events at all in the visible span. The session
+  // is parked, full stop. Don't try to summarize "what happened earlier"
+  // because nothing did.
+  if (isEmptyWindow) {
+    return (
+      'Your agent has been quiet for the whole ' +
+      humanDuration(enriched.durationMs) +
+      ' window. No tool calls, no messages. Likely parked, waiting on you or external input.'
+    );
+  }
 
   const parts: string[] = [
     'Your agent has been quiet for **' + humanDuration(freshnessMs) + '**.',
