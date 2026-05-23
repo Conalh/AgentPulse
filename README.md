@@ -6,13 +6,15 @@
 
 AgentPulse watches your Claude Code, Cursor, and Codex transcript files and classifies what each agent is doing right now — `converging`, `exploring`, `stuck`, `done`, `drifting`, or `idle` — in a two-pane terminal dashboard. Deterministic templating over local signal. No outbound network calls, no language model, no cloud.
 
+![AgentPulse dashboard](./assets/dashboard.png)
+
 ```sh
 npx agentpulse@latest live
 ```
 
 That's the headline command. Drop it in a terminal window next to your editor and you get an always-on read on every session in `~/.claude/projects/`, `~/.cursor/projects/`, and `~/.codex/sessions/`.
 
-Sample readout:
+Sample narrative on a converging session:
 
 ```
 Your agent has been working on the login bug for 18 minutes. It focused
