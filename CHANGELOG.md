@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.3.2] — 2026-05-23
+
+The sprint release. Five things land together: the long-promised sequence pattern detection, sharper converging rule, urgency-sorted session list, activity-density sparkline in the detail pane, and a tightened drift regex that fixes a false positive we caught in the wild.
+
+### Added
+
+- **Ordered action-sequence pattern detection** — the feature the v0.3.0 README originally claimed and v0.3.1 admitted didn't exist. New Layer 2.5 (`src/sequences.ts`) analyzes the chronological shape of events and emits a `SequenceSignal`:
+  - **`tdd_loop`** — `(editing → verification)` cycles. ≥2 → 0.65 confidence, ramps to 0.85 at 3+. Bumps converging confidence to 0.9 when paired with converging-shape.
+  - **`stuck_loop`** — ≥2 cycles editing the *same* file with verification failing. Overrides Rule 3 stuck at 0.85. Highest-priority pattern.
+  - **`refuse_to_verify`** — ≥4 edits + zero verification events. 0.7 confidence. Combined with `editing >= 5`, the classifier flips the bucket to `stuck` regardless of verification trend.
+  - **`exploratory_edit`** — ≥3 consecutive explorations followed by edits in the back half of the window. Supporting signal for converging.
+- Each fires the appropriate narrative phrase appended to the bucket's recap.
+
+- **Urgency sort in the session list.** Pre-fix, the list followed discovery order. Now: `drifting → stuck → pending → converging → exploring → idle → done`, with `lastUpdated DESC` as the tie-break within each tier. Mission-control read: anything that needs attention sits at the top.
+
+- **Activity-density sparkline in `SessionDetail`.** Compact Unicode block-eighths `▁▂▃▄▅▆▇█` rendering of event timestamps across the window. Colored by current bucket. Lifted-in-spirit from agenttrace's metrics view; tells you at a glance "did the agent burst then go quiet" vs. "steady activity throughout."
+
+### Fixed
+
+- **`shell_exfil` regex false positive on `gh release create ...curl|sh...`-style commands.** Pre-fix, the regex scanned the entire command string and matched `curl | sh` inside heredoc'd release-note content (the exact command shipping v0.3.1, which described the drift detector itself, tripped its own rule). Tightened to require `curl|wget` at command start or right after a `&&`/`;`/`||`/`|` separator, with no quote chars between it and the pipe-to-shell. The remaining miss-case is content at start-of-line inside a heredoc, which needs real shell tokenization to catch and isn't worth that complexity here.
+
+- **Smarter converging-without-verification rule (4b).** Pre-fix, the rule fired on `editing >= 5 AND (cluster >= 50% OR primaryFile)`. A session thrashing one file qualified. Now tighter: `editing >= 5 AND cluster >= 70% AND primary file edited at least 3 times`. That's "focused productive work," not "any session with edits." Confidence still 0.6 because verification signal is still absent.
+
+### Tests
+
+104 (was 85). Subagent's PR #8 added 13 sequence-pattern tests; this branch adds 6 sparkline helper tests.
+
 ## [0.3.1] — 2026-05-23
 
 Honesty pass. Three independent inspection rounds (Claude / Gemini / Cursor) converged on the same diagnoses; this release is the union of their P0/P1 fixes plus alignment of the README with the code.

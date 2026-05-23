@@ -242,8 +242,24 @@ const PRIVILEGED_PATH_RULES: { pattern: RegExp; slug: string; label: string }[] 
   { pattern: /^\/private\/var(\/|$)/, slug: 'private_var', label: '/private/var' },
 ];
 
+/**
+ * v0.3.2: anchor `curl|wget` at command start (or right after a `&&` / `;` /
+ * `||` / `|` subcommand separator) so the regex matches AS THE COMMAND, not
+ * as embedded content inside quoted args.
+ *
+ * Pre-fix, a `gh release create --notes "...curl ... | sh..."` (the literal
+ * command shipped while writing release notes about the drift detector
+ * itself) tripped the rule — the regex scanned anywhere in the command
+ * string. The actual executed binary was `gh`, not curl. False positive.
+ *
+ * The shape: `(curl|wget)` must sit at line start or right after a shell
+ * separator, with no quote chars or pipe between curl and the pipe-to-shell.
+ * False positives drop substantially. The remaining miss-case is content at
+ * start-of-line inside a heredoc, which would need real shell tokenization
+ * to catch and isn't worth the complexity here.
+ */
 const SHELL_EXFIL_RE =
-  /\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(sh|bash|zsh)\b/i;
+  /(?:^|[;&|]\s*)(?:sudo\s+)?(curl|wget)\b[^\n|'"]*\|\s*(?:sudo\s+)?(sh|bash|zsh)\b/i;
 
 /**
  * Paths the spec treats as "outside the implicit repo root":
@@ -407,6 +423,25 @@ function topClusterShare(
 
 function firstEditedFile(enriched: EnrichedWindow): string | null {
   return enriched.primaryFiles[0] ?? null;
+}
+
+/**
+ * v0.3.2: count how many times a given file was edited in the window. Used
+ * by the tightened Rule 4b (converging without verification) — we want to
+ * see real focus on the primary file, not just "primary file exists".
+ */
+function countEditsTo(events: TranscriptEvent[], filePath: string): number {
+  if (!filePath) return 0;
+  const target = filePath.replace(/\\/g, '/');
+  let count = 0;
+  for (const ev of events) {
+    if (ev.kind !== 'tool_use') continue;
+    if (ev.toolName !== 'Edit' && ev.toolName !== 'Write' && ev.toolName !== 'NotebookEdit') continue;
+    const fp = extractFilePath(ev);
+    if (!fp) continue;
+    if (fp.replace(/\\/g, '/') === target) count += 1;
+  }
+  return count;
 }
 
 /**
@@ -594,28 +629,34 @@ export function classifyTrajectory(
     return makeVerdict('converging', confidence, signals.slice(0, 4), [], sequence);
   }
 
-  // 4b. Converging (no verification signal) — v0.2.2 patch.
+  // 4b. Converging (no verification signal) — v0.2.2 → v0.3.2.
   //
-  // The original converging rule required `verificationTrend === 'improving'`,
-  // which means heavy editing without test data (or in repos with no test
-  // command at all) would fall all the way through to the 0.3-confidence
-  // exploring fallback. That misclassified obviously-productive sessions —
-  // 40 edits across one cluster is not "exploring", it's converging without
-  // a verification proxy.
+  // Original v0.2.2 rule fired on `editing >= 5 + (cluster >= 50% OR
+  // primaryFile)`. Gemini's review called this out as too aggressive: an
+  // agent thrashing one file (5+ edits, primaryFile set) would fire even
+  // without focused intent. v0.3.2 tightens to: editing >= 5 AND cluster
+  // share >= 70% AND primary file edited at least 3 times. That's
+  // "productive editing on a focused area," not "lots of unfocused edits
+  // somewhere."
   //
-  // Heuristic: a "productive editing session" is editing >= 5 with either
-  // a narrowed cluster (top >= 50%) OR a clear primary file. Confidence is
-  // medium (0.6) because we can't see the outcome, only the activity shape.
-  if (editing >= 5 && (cluster.share >= 0.5 || enriched.primaryFiles.length >= 1)) {
+  // Confidence stays at 0.6 because verification signal is still absent —
+  // we're inferring intent from shape, not outcome.
+  const primaryFileEditCount = enriched.primaryFiles[0]
+    ? countEditsTo(enriched.events, enriched.primaryFiles[0])
+    : 0;
+  if (
+    editing >= 5 &&
+    cluster.share >= 0.7 &&
+    cluster.top &&
+    primaryFileEditCount >= 3
+  ) {
     const pct = Math.round(cluster.share * 100);
-    const signals: string[] = [`${editing} edits in window`];
-    if (cluster.top && cluster.share >= 0.5) {
-      signals.push(`top cluster ${cluster.top} covers ${pct}% of activity`);
-    }
-    if (enriched.primaryFiles.length > 0) {
-      signals.push(`primary file: ${enriched.primaryFiles[0]}`);
-    }
-    signals.push('no verification data — confidence reflects that');
+    const signals: string[] = [
+      `${editing} edits in window`,
+      `top cluster ${cluster.top} covers ${pct}% of activity`,
+      `primary file ${enriched.primaryFiles[0]} edited ${primaryFileEditCount} times`,
+      'no verification data — confidence reflects that',
+    ];
     return makeVerdict('converging', 0.6, signals.slice(0, 4), [], sequence);
   }
 

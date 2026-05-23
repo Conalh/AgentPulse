@@ -42,6 +42,40 @@ export interface AppProps {
  *  are tooling artifacts, not human-facing sessions. */
 const SUBAGENT_NAME_RE = /^agent-[0-9a-f]{8,}/i;
 
+/**
+ * v0.3.2: urgency ordering for the session list.
+ *
+ * The dashboard's at-a-glance read should put the things that need eyes at
+ * the top. Drifting and stuck are warning-shaped; converging is "in flight,
+ * keep an eye"; exploring is "low info"; idle and done are "parked / over".
+ *
+ * Sessions still pending their first pulse (recap === null) sit just below
+ * the warning tier — they're new and worth seeing, but not as urgent as
+ * confirmed drift.
+ */
+const URGENCY_RANK: Record<string, number> = {
+  drifting: 0,
+  stuck: 1,
+  pending: 2, // synthetic — used when recap is null
+  converging: 3,
+  exploring: 4,
+  idle: 5,
+  done: 6,
+};
+
+function urgencyOf(s: SessionState): number {
+  if (!s.recap) return URGENCY_RANK.pending!;
+  return URGENCY_RANK[s.recap.verdict.bucket] ?? 7;
+}
+
+function compareByUrgency(a: SessionState, b: SessionState): number {
+  const ua = urgencyOf(a);
+  const ub = urgencyOf(b);
+  if (ua !== ub) return ua - ub;
+  // Tie-break: most-recently-updated within the same bucket sorts first.
+  return b.lastUpdated - a.lastUpdated;
+}
+
 function isSubagentSession(s: SessionState): boolean {
   const name = s.session.projectName ?? '';
   if (SUBAGENT_NAME_RE.test(name)) return true;
@@ -100,6 +134,13 @@ export function App({
         return s.recap.enriched.toolInvocationCount > 0;
       });
     }
+    // v0.3.2: urgency sort. Pre-fix, the list was in discovery order
+    // (which roughly maps to lastModified DESC). For a "mission control"
+    // dashboard the user wants the things that need attention surfaced
+    // at the top: drifting/stuck first, active work next, idle/done last.
+    // Within a bucket, sort by lastUpdated DESC so the freshest entry in
+    // each tier sits up top.
+    v = [...v].sort(compareByUrgency);
     if (maxSessions > 0 && v.length > maxSessions) {
       v = v.slice(0, maxSessions);
     }

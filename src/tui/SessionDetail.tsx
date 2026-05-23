@@ -10,6 +10,7 @@ import { Box, Text } from 'ink';
 import type { SessionState } from '../types.js';
 import { colorFor, isLowConfidence, pillFor } from './theme.js';
 import { formatAgo, formatDelta } from './duration.js';
+import { sparkline } from './sparkline.js';
 
 /**
  * v0.3.1: Render a single narrative line, parsing `**bold**` Markdown spans
@@ -117,6 +118,24 @@ export function SessionDetail({
           {verdict.signals.map((sig, i) => (
             <Text key={i}> · {sig}</Text>
           ))}
+        </Box>
+      )}
+
+      {recap && recap.enriched.events.length > 0 && (
+        <Box marginTop={1}>
+          <Text dimColor>Activity: </Text>
+          <Text color={bucket ? colorFor(bucket) : 'cyan'}>
+            {sparkline(
+              recap.enriched.events.map((e) => e.timestamp),
+              recap.enriched.windowStart,
+              recap.enriched.windowEnd,
+              { width: 24 }
+            )}
+          </Text>
+          <Text dimColor>
+            {' '}({recap.enriched.events.length} event{recap.enriched.events.length === 1 ? '' : 's'} over{' '}
+            {formatDelta(recap.enriched.windowEnd - recap.enriched.windowStart)})
+          </Text>
         </Box>
       )}
 
