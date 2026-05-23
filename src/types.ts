@@ -341,6 +341,16 @@ export interface LiveOptions {
   detectorsEnabled?: boolean;
   /** Override discovery roots. */
   discoveryRoots?: string[];
-  /** Skip sessions older than this. Default: 24h. */
+  /** Skip sessions older than this. Default: 1h (was 24h pre-v0.2.1 — that
+   *  picked up too many idle transcripts to be useful as a "what's happening
+   *  now" dashboard). Use `Infinity` to disable. */
   staleMs?: number;
+  /** Include sessions with zero tool invocations in the current window.
+   *  Default: false — the dashboard hides idle sessions so the list reflects
+   *  what's actively running, not what's been touched recently. */
+  showIdle?: boolean;
+  /** Maximum number of sessions to render in the list. Default: 10.
+   *  Sessions are sorted by lastModified DESC, so the cap keeps the freshest
+   *  N visible. Use a large number or 0 to disable. */
+  maxSessions?: number;
 }

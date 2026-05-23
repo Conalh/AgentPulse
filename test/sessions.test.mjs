@@ -13,6 +13,7 @@ import { tmpdir, homedir } from 'node:os';
 import { join, sep } from 'node:path';
 
 import { discoverSessions, createSessionWatcher } from '../dist/sessions/index.js';
+import { decodeSlug, deriveProjectName } from '../dist/sessions/discovery.js';
 
 function mkTmp(prefix = 'agentpulse-sessions-') {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -207,4 +208,36 @@ test('watcher emits remove when a JSONL is unlinked', async () => {
     await watcher.stop();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// v0.2.1 regression: Windows drive-letter prefix in Claude Code slugs.
+// Pre-fix, `C--Users-conno-Dev-AgentPulse` decoded to `C` and every Windows
+// session collapsed to a single-letter project name.
+test('decodeSlug strips Windows drive-letter prefix (C--Users-... → last segment)', () => {
+  assert.equal(decodeSlug('C--Users-conno-Dev-AgentPulse'), 'AgentPulse');
+  assert.equal(decodeSlug('D--Projects-MyApp'), 'MyApp');
+  assert.equal(decodeSlug('c--Users-conno-Dev-Cool'), 'Cool');
+  // Non-drive slugs still work.
+  assert.equal(decodeSlug('c-Dev-MyApp'), 'MyApp');
+  assert.equal(decodeSlug('repo'), 'repo');
+  // Single-letter fallthrough (still single letter — caller handles the cwd fallback).
+  assert.equal(decodeSlug('C'), 'C');
+});
+
+test('deriveProjectName falls back to cwd basename when slug decodes to a single letter', () => {
+  const root = '/.claude/projects';
+  // Simulated path: ~/.claude/projects/C/<uuid>.jsonl with cwd in the transcript.
+  const transcript = '/.claude/projects/C/abc-def.jsonl';
+  // Without cwd → returns "C" (the broken pre-v0.2.1 behavior we now document).
+  assert.equal(deriveProjectName(transcript, root), 'C');
+  // With cwd → falls back to basename(cwd), giving the real project name.
+  assert.equal(
+    deriveProjectName(transcript, root, '/Users/conno/Dev/RealProject'),
+    'RealProject'
+  );
+  // cwd basename that's also a single letter → stays with the original.
+  assert.equal(
+    deriveProjectName(transcript, root, '/X'),
+    'C'
+  );
 });

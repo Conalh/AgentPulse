@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.1] — 2026-05-23
+
+Dogfooding patch — first real run of `agentpulse live` surfaced three UX issues that made the dashboard noisier than useful on a Windows checkout with months of Claude Code history. All three fixed.
+
+### Fixed
+
+- **Slug decoder mishandled Windows drive-letter prefix.** Claude Code stores projects under paths like `~/.claude/projects/C--Users-conno-Dev-AgentPulse/`. The pre-fix decoder grabbed the first segment, so every Windows-rooted session collapsed to the project name `C`. Now strips the `C--` / `D--` style prefix and takes the last meaningful segment. On a real Windows checkout this turned 30 sessions labeled `C` into 30 sessions labeled with their actual project names.
+
+- **`deriveProjectName` accepts a `cwd` fallback.** When the slug still decodes to a single letter (legacy or malformed slug), and the transcript's first line carries a `cwd`, the project name falls back to `basename(cwd)`. Belt and braces.
+
+### Changed (defaults)
+
+- **`--stale` default tightened from `24h` to `1h`.** 24 hours was surfacing every transcript touched in the last day, drowning the "what's happening right now" intent. Set `--stale 24h` to recover the old behavior.
+
+- **Idle sessions hidden by default.** Sessions with zero tool invocations in the current window are filtered from the displayed list. The orchestrator still tracks them (so a quiet session that picks back up pops in automatically), but the dashboard stays focused on what's actually running.
+
+- **List capped at 10 sessions by default** (sorted lastModified DESC). Configurable.
+
+### Added
+
+- **`--show-idle`** flag — include zero-activity sessions in the list.
+- **`--max-sessions <N>`** flag — adjust the cap (0 disables).
+- Header now shows `visible/total sessions` when filtering hides anything, so it's obvious that more exist.
+
+### Test count
+
+80 (was 78). Two new regression tests on the slug decoder Windows path.
+
 ## [0.2.0] — 2026-05-23
 
 **Live multi-session TUI** — new `agentpulse live` subcommand that auto-discovers active agent sessions, runs the AgentPulse pipeline per session on a rolling refresh, and renders a two-pane Ink TUI with color-coded verdict pills and live updates.

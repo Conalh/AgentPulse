@@ -17,7 +17,10 @@ import type {
   Runtime,
 } from '../types.js';
 
-const DEFAULT_STALE_MS = 24 * 60 * 60 * 1000;
+// v0.2.1: tightened from 24h. 24h was picking up every transcript touched in
+// the last day, drowning the dashboard in idle sessions. 1h matches the
+// "what's actually happening right now" intent. Override via --stale on the CLI.
+const DEFAULT_STALE_MS = 60 * 60 * 1000;
 
 interface Root {
   /** Absolute path on disk. */
@@ -62,48 +65,68 @@ export function inferRuntimeFromPath(p: string): Runtime {
 
 /**
  * Derive a friendly project name from a path. Claude Code uses slugs like
- * `c-Dev-MyApp` for the project dir (originally `C:\Dev\MyApp` or
- * `/c/Dev/MyApp`). We take the last "meaningful" segment after splitting on
- * the slug separator.
+ * `C--Users-conno-Dev-MyApp` for the project dir (originally `C:\Users\conno\Dev\MyApp`
+ * or `/Users/conno/Dev/MyApp`). We take the last meaningful segment after
+ * splitting on the slug separator.
+ *
+ * v0.2.1: if the decoded slug looks like a Windows drive prefix only
+ * (just "C", "D", etc.), we fall back to `basename(cwd)` when a cwd was
+ * extracted from the transcript. This is the difference between 30 sessions
+ * all labeled "C" and 30 sessions labeled with their actual project names.
  */
-export function deriveProjectName(transcriptPath: string, rootPath: string): string | undefined {
-  // The project dir is the path component that sits directly under the root.
-  // If the transcript lives multiple levels deep we still take the first
-  // segment under the root — that's typically the project slug for both
-  // Claude Code and Cursor.
+export function deriveProjectName(
+  transcriptPath: string,
+  rootPath: string,
+  cwd?: string
+): string | undefined {
   const normTranscript = resolve(transcriptPath);
   const normRoot = resolve(rootPath);
+
+  let slug: string | undefined;
   if (!normTranscript.startsWith(normRoot + sep) && normTranscript !== normRoot) {
-    // Fall back to the parent dir's basename.
-    return decodeSlug(basename(transcriptPath, '.jsonl')) || undefined;
+    slug = basename(transcriptPath, '.jsonl');
+  } else {
+    const rel = normTranscript.slice(normRoot.length + 1);
+    const firstSeg = rel.split(/[\\/]/)[0];
+    if (firstSeg) {
+      slug = firstSeg.toLowerCase().endsWith('.jsonl')
+        ? basename(firstSeg, '.jsonl')
+        : firstSeg;
+    }
   }
-  const rel = normTranscript.slice(normRoot.length + 1);
-  const firstSeg = rel.split(/[\\/]/)[0];
-  if (!firstSeg) return undefined;
-  // If firstSeg IS the file itself (transcript at root), use its basename.
-  if (firstSeg.toLowerCase().endsWith('.jsonl')) {
-    return decodeSlug(basename(firstSeg, '.jsonl')) || undefined;
+
+  const decoded = slug ? decodeSlug(slug) : undefined;
+
+  // Fallback: if the decoded slug is junk (single letter that looks like a
+  // drive prefix), prefer the cwd's basename.
+  if ((!decoded || /^[a-z]$/i.test(decoded)) && cwd) {
+    const fromCwd = basename(cwd);
+    if (fromCwd && !/^[a-z]$/i.test(fromCwd)) return fromCwd;
   }
-  return decodeSlug(firstSeg) || undefined;
+
+  return decoded || undefined;
 }
 
 /**
  * Convert a Claude Code-style slug back into something human-readable.
+ *   `C--Users-conno-Dev-MyApp` → `MyApp`
  *   `c-Dev-MyApp` → `MyApp`
  *   `-Users-conal-projects-cool-app` → `cool-app`
  *   `repo` → `repo`
+ *
+ * v0.2.1: handles the `C--` Windows drive-letter prefix produced by Claude
+ * Code on Windows (the `C:\` root gets slug-encoded as `C--`).
  */
 export function decodeSlug(slug: string): string {
   if (!slug) return slug;
   // Drop a leading dash if present (Unix slugs often start with one).
   let s = slug.startsWith('-') ? slug.slice(1) : slug;
-  // Split on '-' and find the last segment that looks "name-ish" — i.e. not
-  // a single letter (drive prefix) and not a system directory name.
+  // Drop a `<letter>--` Windows-drive prefix if present.
+  s = s.replace(/^[a-z]--/i, '');
+  // Split on '-' and find the last meaningful segment.
   const parts = s.split('-').filter(Boolean);
   if (parts.length === 0) return slug;
-  // Heuristic: take the last 1-2 segments. If the very last segment is short
-  // and the prior is longer, join them. Otherwise just return the last.
-  const last = parts[parts.length - 1];
+  const last = parts[parts.length - 1]!;
   return last;
 }
 
@@ -233,8 +256,10 @@ export async function discoverSessions(
       const absPath = resolve(file);
       if (seen.has(absPath)) continue;
 
-      const projectName = deriveProjectName(absPath, root.path);
+      // Extract cwd first so deriveProjectName can use it as a fallback when
+      // the path slug decodes to a junk single-letter (Windows drive only).
       const cwd = await extractCwdFromFirstLine(absPath);
+      const projectName = deriveProjectName(absPath, root.path, cwd);
 
       seen.set(absPath, {
         id: sessionIdFromPath(absPath),

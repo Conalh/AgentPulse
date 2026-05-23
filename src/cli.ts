@@ -38,7 +38,9 @@ Live options:
   --refresh <duration>      Background refresh cadence. Default: 30s
   --no-detectors            Skip drift detection
   --roots <p1,p2,...>       Override discovery roots (comma-separated)
-  --stale <duration>        Skip sessions older than this. Default: 24h
+  --stale <duration>        Skip sessions older than this. Default: 1h
+  --show-idle               Include sessions with zero activity in the window
+  --max-sessions <N>        Cap the displayed list. Default: 10
 
   -h, --help                Show this help`;
 
@@ -282,6 +284,8 @@ function parseLiveCli(
         'no-detectors': { type: 'boolean', default: false },
         roots: { type: 'string' },
         stale: { type: 'string' },
+        'show-idle': { type: 'boolean', default: false },
+        'max-sessions': { type: 'string' },
       },
     });
   } catch (err) {
@@ -302,7 +306,7 @@ function parseLiveCli(
     return { ok: false, error: { message: `Invalid --refresh duration: ${refreshStr}`, code: 2 } };
   }
 
-  const staleStr = (v.stale as string | undefined) ?? '24h';
+  const staleStr = (v.stale as string | undefined) ?? '1h';
   const staleMs = parseDuration(staleStr);
   if (staleMs === null) {
     return { ok: false, error: { message: `Invalid --stale duration: ${staleStr}`, code: 2 } };
@@ -313,6 +317,19 @@ function parseLiveCli(
     ? rootsStr.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
     : undefined;
 
+  const maxSessionsStr = v['max-sessions'] as string | undefined;
+  let maxSessions: number | undefined;
+  if (maxSessionsStr !== undefined) {
+    const n = Number(maxSessionsStr);
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+      return {
+        ok: false,
+        error: { message: `Invalid --max-sessions: ${maxSessionsStr} (expected non-negative integer)`, code: 2 },
+      };
+    }
+    maxSessions = n;
+  }
+
   return {
     ok: true,
     opts: {
@@ -321,6 +338,8 @@ function parseLiveCli(
       detectorsEnabled: !v['no-detectors'],
       discoveryRoots,
       staleMs,
+      showIdle: Boolean(v['show-idle']),
+      maxSessions,
     },
   };
 }

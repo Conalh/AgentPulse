@@ -24,6 +24,11 @@ export interface AppProps {
   watcher: SessionWatcher;
   refreshIntervalMs: number;
   onExit: () => void;
+  /** Include sessions with zero tool invocations in the window. Default false. */
+  showIdle?: boolean;
+  /** Cap the displayed list. 0 disables the cap. Default unbounded when
+   *  omitted (the CLI passes 10 by default). */
+  maxSessions?: number;
 }
 
 const HELP_LINES = [
@@ -33,15 +38,44 @@ const HELP_LINES = [
   'q / Ctrl-C   quit',
 ];
 
-export function App({ orchestrator, watcher, refreshIntervalMs, onExit }: AppProps): React.ReactElement {
+export function App({
+  orchestrator,
+  watcher,
+  refreshIntervalMs,
+  onExit,
+  showIdle = false,
+  maxSessions = 0,
+}: AppProps): React.ReactElement {
   const { exit } = useApp();
   const [states, setStates] = useState<SessionState[]>(() => orchestrator.states());
+  const [now, setNow] = useState<number>(() => Date.now());
+  const [showHelp, setShowHelp] = useState<boolean>(false);
+
+  // Filter + cap. Filtering by "active in window" is purely a render concern —
+  // the orchestrator still tracks every session, so an idle one becoming
+  // active pops in on the next refresh without needing to be re-added.
+  // A session counts as idle when its recap is missing or shows zero tool
+  // invocations in the window. Sessions still mid-first-pulse (recap === null)
+  // are kept visible regardless of showIdle so the dashboard isn't blank on
+  // startup.
+  const visibleStates = useMemo(() => {
+    let v = states;
+    if (!showIdle) {
+      v = v.filter((s) => {
+        if (s.recap === null) return true; // first pulse pending — keep visible
+        return s.recap.enriched.toolInvocationCount > 0;
+      });
+    }
+    if (maxSessions > 0 && v.length > maxSessions) {
+      v = v.slice(0, maxSessions);
+    }
+    return v;
+  }, [states, showIdle, maxSessions]);
+
   const [selectedId, setSelectedId] = useState<string | null>(() => {
     const initial = orchestrator.states();
     return initial.length > 0 ? initial[0]!.session.id : null;
   });
-  const [now, setNow] = useState<number>(() => Date.now());
-  const [showHelp, setShowHelp] = useState<boolean>(false);
 
   // Subscribe to orchestrator updates.
   useEffect(() => {
@@ -77,17 +111,20 @@ export function App({ orchestrator, watcher, refreshIntervalMs, onExit }: AppPro
     return () => clearInterval(id);
   }, []);
 
-  // If the selected session disappears, fall back to the first.
+  // If the selected session disappears from the visible list, fall back to
+  // the first visible one. (When the user toggles showIdle off, their previous
+  // selection may now be hidden.)
   useEffect(() => {
-    if (states.length === 0) {
+    if (visibleStates.length === 0) {
       if (selectedId !== null) setSelectedId(null);
       return;
     }
-    const stillThere = states.some((s) => s.session.id === selectedId);
-    if (!stillThere) setSelectedId(states[0]!.session.id);
-  }, [states, selectedId]);
+    const stillThere = visibleStates.some((s) => s.session.id === selectedId);
+    if (!stillThere) setSelectedId(visibleStates[0]!.session.id);
+  }, [visibleStates, selectedId]);
 
-  // Keyboard input.
+  // Keyboard input. Navigation operates over `visibleStates` so hidden idle
+  // sessions don't appear in the up/down cycle.
   useInput((input, key) => {
     if (input === 'q' || (key.ctrl && input === 'c')) {
       onExit();
@@ -98,21 +135,21 @@ export function App({ orchestrator, watcher, refreshIntervalMs, onExit }: AppPro
       setShowHelp((v) => !v);
       return;
     }
-    if (states.length === 0) return;
+    if (visibleStates.length === 0) return;
 
     const idx = Math.max(
       0,
-      states.findIndex((s) => s.session.id === selectedId)
+      visibleStates.findIndex((s) => s.session.id === selectedId)
     );
 
     if (key.upArrow || input === 'k') {
       const next = Math.max(0, idx - 1);
-      setSelectedId(states[next]!.session.id);
+      setSelectedId(visibleStates[next]!.session.id);
       return;
     }
     if (key.downArrow || input === 'j') {
-      const next = Math.min(states.length - 1, idx + 1);
-      setSelectedId(states[next]!.session.id);
+      const next = Math.min(visibleStates.length - 1, idx + 1);
+      setSelectedId(visibleStates[next]!.session.id);
       return;
     }
     if (input === 'r' && selectedId) {
@@ -125,11 +162,17 @@ export function App({ orchestrator, watcher, refreshIntervalMs, onExit }: AppPro
   });
 
   const selectedState = useMemo(
-    () => states.find((s) => s.session.id === selectedId) ?? null,
-    [states, selectedId]
+    () => visibleStates.find((s) => s.session.id === selectedId) ?? null,
+    [visibleStates, selectedId]
   );
 
-  const headerRight = `${states.length} session${states.length === 1 ? '' : 's'}, refresh ${formatDelta(refreshIntervalMs)}`;
+  // Header shows total tracked sessions + how many are visible after filter,
+  // so the user knows hidden sessions exist when the count diverges.
+  const totalLabel =
+    visibleStates.length === states.length
+      ? `${states.length} session${states.length === 1 ? '' : 's'}`
+      : `${visibleStates.length}/${states.length} sessions`;
+  const headerRight = `${totalLabel}, refresh ${formatDelta(refreshIntervalMs)}`;
 
   return (
     <Box flexDirection="column">
@@ -139,7 +182,7 @@ export function App({ orchestrator, watcher, refreshIntervalMs, onExit }: AppPro
       </Box>
 
       <Box borderStyle="round" flexDirection="column" paddingX={1}>
-        <SessionList states={states} selectedId={selectedId} now={now} />
+        <SessionList states={visibleStates} selectedId={selectedId} now={now} />
       </Box>
 
       <Box borderStyle="round" flexDirection="column">
