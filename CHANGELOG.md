@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.4.5] — 2026-05-23
+
+### Changed — session list now clusters by project
+
+When multiple agents run against the same repo — say Cursor + Claude Code + Codex all chewing on `ontology` — the dashboard now puts those rows adjacent so the project reads as one unit, regardless of bucket. Pre-fix (`v0.3.2`'s urgency-first sort), the three sessions landed in different buckets and scattered across the list.
+
+**New sort key precedence** (`src/tui/sort.ts`):
+1. Project label (case-insensitive ascending) — same-project sessions cluster
+2. Urgency rank within the project — drifting/stuck float to the top of their group, idle/done sink
+3. Runtime ascending — stable tie-break across runtimes for the same project
+4. lastUpdated DESC — freshest first for truly identical project+runtime
+
+**Trade-off**: a single drifting session in an alphabetically-late project no longer floats to the top of the screen. The verdict pill colour still surfaces urgency per row, and the v0.4.4 disambiguator still distinguishes within a cluster.
+
+### Refactor
+
+- Extracted `URGENCY_RANK`, `urgencyOf`, and the new `compareByProject` comparator into `src/tui/sort.ts`. Pure, no React/Ink imports — directly unit-testable.
+- Exported `fallbackLabel` from `src/tui/SessionList.tsx` so the comparator clusters by the same project key the user sees rendered.
+
+### Tests
+
+142 (was 137). Five new sort tests:
+- `URGENCY_RANK` ordering invariant (drifting < stuck < pending < converging < exploring < idle < done)
+- Same-project clustering across alphabetical project order + runtime tie-break
+- Within-project urgency precedence (drifting beats idle beats done)
+- `lastUpdated` DESC tie-breaks identical project+runtime
+- Project name comparison is case-insensitive (`AgentPulse` and `agentpulse` cluster)
+
 ## [0.4.4] — 2026-05-23
 
 Last visible bug from the v0.4.3-screenshot review.

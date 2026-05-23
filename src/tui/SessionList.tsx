@@ -59,7 +59,12 @@ function inferProjectFromPaths(paths: readonly string[]): string | undefined {
   return undefined;
 }
 
-function fallbackLabel(state: SessionState): string {
+/**
+ * Resolve the display label for a session — the same string the list
+ * renders as the project name. Exported so the App-level sort comparator
+ * can cluster rows by the same project key the user sees in the row.
+ */
+export function fallbackLabel(state: SessionState): string {
   const sess = state.session;
   if (sess.projectName && sess.projectName.length > 0) return sess.projectName;
 
