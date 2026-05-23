@@ -1,13 +1,309 @@
-// STUB — replaced by Agent #2 (enrichment workstream).
-// See src/types.ts for the EnrichedWindow contract.
+/**
+ * Layer 2 — Semantic enrichment.
+ *
+ * Pure, deterministic transformation: TranscriptEvent[] → EnrichedWindow.
+ * No I/O, no network, no LLM, no external libs beyond Node stdlib.
+ *
+ * See src/types.ts for the EnrichedWindow contract.
+ */
 
-import type { TranscriptEvent, EnrichedWindow, EnrichOptions } from './types.js';
+import type {
+  TranscriptEvent,
+  EnrichedWindow,
+  EnrichOptions,
+  ActionClass,
+  Runtime,
+} from './types.js';
+
+// ─────────────────────────────────────────────────────────────────────
+// Stopwords — small English list. Frequency-based topic extraction with
+// a stopword filter is sufficient for v0.1; TF-IDF is overkill.
+// ─────────────────────────────────────────────────────────────────────
+
+const STOPWORDS: ReadonlySet<string> = new Set([
+  'the', 'a', 'an', 'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being',
+  'of', 'to', 'and', 'or', 'but', 'if', 'so', 'as', 'at', 'by', 'in', 'on',
+  'for', 'from', 'with', 'into', 'onto', 'about', 'over', 'under', 'than',
+  'then', 'that', 'this', 'these', 'those', 'there', 'here', 'where', 'when',
+  'what', 'why', 'how', 'who', 'whom', 'which', 'whose',
+  'can', 'could', 'would', 'should', 'will', 'shall', 'may', 'might', 'must',
+  'do', 'does', 'did', 'done', 'doing',
+  'have', 'has', 'had', 'having',
+  'i', 'you', 'me', 'my', 'mine', 'your', 'yours', 'we', 'us', 'our', 'ours',
+  'they', 'them', 'their', 'theirs', 'he', 'she', 'his', 'her', 'hers', 'it',
+  'its', 'one', 'ones',
+  'just', 'only', 'also', 'too', 'very', 'really', 'quite', 'still', 'again',
+  'not', 'no', 'yes', 'ok', 'okay',
+  'get', 'got', 'getting', 'go', 'goes', 'going', 'gone',
+  'make', 'made', 'makes', 'making',
+  'see', 'saw', 'seen', 'seeing',
+  'now', 'soon', 'later', 'before', 'after', 'while', 'during',
+  'some', 'any', 'all', 'both', 'each', 'every', 'few', 'many', 'much', 'most',
+  'other', 'others', 'another', 'such', 'same',
+  'up', 'down', 'out', 'off', 'away', 'back',
+  'pls', 'please', 'thanks', 'thank',
+  'lets', "let's", 'let',
+  's', 't', 'd', 'll', 're', 've', 'm',
+]);
+
+// Exported for tests / introspection.
+export const STOPWORD_COUNT: number = STOPWORDS.size;
+
+// ─────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────
+
+function tokenize(text: string): string[] {
+  // Lowercase, replace anything that isn't a-z, 0-9, or apostrophe with space,
+  // then split on whitespace and drop empties.
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9']+/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+}
+
+function topNByCount(
+  counts: Map<string, number>,
+  n: number,
+): string[] {
+  // Deterministic tie-break: descending count, then ascending key.
+  return [...counts.entries()]
+    .sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+    })
+    .slice(0, n)
+    .map(([k]) => k);
+}
+
+function getFilePath(toolInput: Record<string, unknown> | undefined): string | undefined {
+  if (!toolInput) return undefined;
+  const fp = toolInput['file_path'];
+  return typeof fp === 'string' && fp.length > 0 ? fp : undefined;
+}
+
+/**
+ * Normalize a path to forward slashes and bucket by the top-2-level parent
+ * directory of the file. e.g. `src/auth/middleware.ts` → `src/auth`,
+ * `tests/unit/foo.test.ts` → `tests/unit`, `single.ts` → `.`.
+ */
+function pathClusterKey(filePath: string): string {
+  const norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+  const parts = norm.split('/').filter((p) => p.length > 0);
+  // Drop the filename (last segment).
+  if (parts.length <= 1) return '.';
+  const dirParts = parts.slice(0, -1);
+  if (dirParts.length === 0) return '.';
+  if (dirParts.length === 1) return dirParts[0]!;
+  return `${dirParts[0]}/${dirParts[1]}`;
+}
+
+// Bash command patterns that indicate verification (tests / lint / build / typecheck).
+// Matched against the leading portion of the command string.
+const VERIFICATION_PATTERNS: readonly RegExp[] = [
+  /\bnpm\s+test\b/,
+  /\bnpm\s+run\b/,
+  /\bnpx\s+(vitest|jest|mocha|playwright|tsc|eslint|prettier)\b/,
+  /\byarn\s+(test|run|build|lint)\b/,
+  /\bpnpm\s+(test|run|build|lint)\b/,
+  /\bpytest\b/,
+  /\bpython\s+-m\s+pytest\b/,
+  /\bunittest\b/,
+  /\bcargo\s+(test|build|check|clippy)\b/,
+  /\bgo\s+(test|build|vet)\b/,
+  /\bmake\b/,
+  /\bvitest\b/,
+  /\bjest\b/,
+  /\beslint\b/,
+  /\btsc\b/,
+  /\bmypy\b/,
+  /\bruff\b/,
+  /\bgradle\b/,
+  /\bmvn\b/,
+  /\brake\s+test\b/,
+  /\bphpunit\b/,
+];
+
+const NAVIGATION_PATTERNS: readonly RegExp[] = [
+  /^\s*cd(\s|$)/,
+  /^\s*ls(\s|$)/,
+  /^\s*pwd(\s|$)/,
+  /^\s*git\s+status(\s|$)/,
+  /^\s*git\s+log(\s|$)/,
+  /^\s*git\s+diff(\s|$)/,
+  /^\s*git\s+branch(\s|$)/,
+  /^\s*git\s+show(\s|$)/,
+  /^\s*echo(\s|$)/,
+  /^\s*which(\s|$)/,
+  /^\s*whoami(\s|$)/,
+];
+
+const EXTERNAL_BASH_PATTERNS: readonly RegExp[] = [
+  /^\s*curl(\s|$)/,
+  /^\s*wget(\s|$)/,
+  /^\s*http(\s|$)/,
+  /^\s*httpie(\s|$)/,
+  /^\s*gh\s+api(\s|$)/,
+];
+
+function classifyToolUse(event: TranscriptEvent): ActionClass {
+  const name = event.toolName ?? '';
+
+  // MCP tools (any tool name starting with `mcp__`) → external.
+  if (name.startsWith('mcp__')) return 'external';
+
+  switch (name) {
+    case 'Read':
+    case 'Glob':
+    case 'Grep':
+    case 'LS':
+      return 'exploration';
+    case 'Write':
+    case 'Edit':
+    case 'NotebookEdit':
+      return 'editing';
+    case 'WebFetch':
+    case 'WebSearch':
+      return 'external';
+    case 'Bash': {
+      const cmd = String(event.toolInput?.['command'] ?? '');
+      // External Bash beats navigation/verification — `curl` is external even
+      // though we never expect it to also be navigation.
+      for (const re of EXTERNAL_BASH_PATTERNS) {
+        if (re.test(cmd)) return 'external';
+      }
+      for (const re of VERIFICATION_PATTERNS) {
+        if (re.test(cmd)) return 'verification';
+      }
+      for (const re of NAVIGATION_PATTERNS) {
+        if (re.test(cmd)) return 'navigation';
+      }
+      return 'other';
+    }
+    default:
+      return 'other';
+  }
+}
+
+function commandVerbOf(command: string): string | undefined {
+  const trimmed = command.trim();
+  if (trimmed.length === 0) return undefined;
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.length === 0) return undefined;
+  if (tokens.length === 1) return tokens[0];
+  return `${tokens[0]} ${tokens[1]}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Main entry point
+// ─────────────────────────────────────────────────────────────────────
 
 export function enrichWindow(
-  _events: TranscriptEvent[],
-  _windowStart: number,
-  _windowEnd: number,
-  _opts?: EnrichOptions
+  events: TranscriptEvent[],
+  windowStart: number,
+  windowEnd: number,
+  opts?: EnrichOptions,
 ): EnrichedWindow {
-  throw new Error('enrich.enrichWindow not yet implemented');
+  const topicLimit = opts?.topicLimit ?? 5;
+  const primaryFileLimit = opts?.primaryFileLimit ?? 3;
+  const commandVerbLimit = opts?.commandVerbLimit ?? 5;
+
+  // Filter to events inside the window. timestamp === 0 means "unknown" per
+  // the parser contract; drop those.
+  const inWindow = events.filter(
+    (e) =>
+      typeof e.timestamp === 'number' &&
+      e.timestamp > 0 &&
+      e.timestamp >= windowStart &&
+      e.timestamp <= windowEnd,
+  );
+
+  // 1. Topic extraction from user prose.
+  const topicCounts = new Map<string, number>();
+  let userMessageCount = 0;
+  for (const e of inWindow) {
+    if (e.kind !== 'user_message') continue;
+    userMessageCount += 1;
+    const text = e.text ?? '';
+    for (const tok of tokenize(text)) {
+      if (STOPWORDS.has(tok)) continue;
+      // Drop pure numeric tokens and single-character tokens — noise.
+      if (tok.length < 2) continue;
+      if (/^\d+$/.test(tok)) continue;
+      topicCounts.set(tok, (topicCounts.get(tok) ?? 0) + 1);
+    }
+  }
+  const topics = topNByCount(topicCounts, topicLimit);
+
+  // 2. Path clusters from tool inputs that carry a file_path.
+  const pathClusters: Record<string, number> = {};
+  // 4. Primary files (Write/Edit/NotebookEdit edit counts per file).
+  const editCounts = new Map<string, number>();
+  // 3. Action classification counts.
+  const actionCounts: Record<ActionClass, number> = {
+    exploration: 0,
+    editing: 0,
+    verification: 0,
+    external: 0,
+    navigation: 0,
+    other: 0,
+  };
+  // 5. Command verbs.
+  const verbCounts = new Map<string, number>();
+  // 6. Aggregates.
+  const uniqueToolsSet = new Set<string>();
+  let toolInvocationCount = 0;
+  const runtimeUsage: Partial<Record<Runtime, number>> = {};
+
+  for (const e of inWindow) {
+    // Runtime usage covers all events, not just tool_use.
+    if (e.runtime) {
+      runtimeUsage[e.runtime] = (runtimeUsage[e.runtime] ?? 0) + 1;
+    }
+
+    if (e.kind !== 'tool_use') continue;
+
+    toolInvocationCount += 1;
+    if (e.toolName) uniqueToolsSet.add(e.toolName);
+
+    const fp = getFilePath(e.toolInput);
+    if (fp) {
+      const cluster = pathClusterKey(fp);
+      pathClusters[cluster] = (pathClusters[cluster] ?? 0) + 1;
+    }
+
+    const cls = classifyToolUse(e);
+    actionCounts[cls] += 1;
+
+    if (cls === 'editing' && fp) {
+      editCounts.set(fp, (editCounts.get(fp) ?? 0) + 1);
+    }
+
+    if (e.toolName === 'Bash') {
+      const cmd = String(e.toolInput?.['command'] ?? '');
+      const verb = commandVerbOf(cmd);
+      if (verb) verbCounts.set(verb, (verbCounts.get(verb) ?? 0) + 1);
+    }
+  }
+
+  const primaryFiles = topNByCount(editCounts, primaryFileLimit);
+  const commandVerbs = topNByCount(verbCounts, commandVerbLimit);
+  const uniqueTools = [...uniqueToolsSet].sort();
+
+  return {
+    events: inWindow,
+    windowStart,
+    windowEnd,
+    durationMs: windowEnd - windowStart,
+    topics,
+    pathClusters,
+    actionCounts,
+    primaryFiles,
+    commandVerbs,
+    uniqueTools,
+    toolInvocationCount,
+    userMessageCount,
+    runtimeUsage,
+  };
 }
