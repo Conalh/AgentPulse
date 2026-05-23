@@ -30,7 +30,10 @@ import { enrichWindow } from './enrich.js';
 import { classifyTrajectory, readOutcomeSignal } from './trajectory.js';
 import { analyzeSequences } from './sequences.js';
 import { renderRecap } from './narrative.js';
+import { loadExceptions } from './exceptions.js';
 import type { PulseRecap } from './types.js';
+
+export { loadExceptions, appendExceptions } from './exceptions.js';
 
 export interface PulseOptions {
   /** Glob or directory of transcript files. */
@@ -47,6 +50,11 @@ export interface PulseOptions {
    *  to true on every refresh to avoid `console.warn` interfering with
    *  Ink's screen redraw. Default: false. */
   silent?: boolean;
+  /** v0.4.1: Path used to locate the per-session exception baseline file
+   *  (`.agentpulse-exceptions.json`). Accepts a directory or the full file
+   *  path. When omitted, falls back to `repoRoot`. When neither is set,
+   *  no exceptions are loaded — drift detection runs normally. */
+  exceptionsPath?: string;
 }
 
 export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
@@ -66,6 +74,12 @@ export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
   // enriched window's events (already timestamp-filtered) and feeds the
   // classifier as an additional input. Pure function, no I/O.
   const sequence = analyzeSequences(enriched.events);
+  // v0.4.1: load the per-session exception baseline before classification.
+  // `exceptionsPath` wins when supplied; otherwise the session's `repoRoot`
+  // is the conventional location. Missing / malformed files yield an empty
+  // set — exceptions are an optional baseline, not required config.
+  const exceptionsSearchPath = opts.exceptionsPath ?? opts.repoRoot;
+  const exceptions = await loadExceptions(exceptionsSearchPath);
   const verdict = classifyTrajectory(enriched, outcome, {
     detectorsEnabled: opts.detectorsEnabled ?? true,
     // v0.3.1: thread repoRoot into drift detection so a Write outside the
@@ -73,6 +87,7 @@ export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
     // hardcoded prefixes (`/tmp/`, `/var/`, `~/`).
     repoRoot: opts.repoRoot,
     sequence,
+    exceptions,
   });
 
   return renderRecap(enriched, outcome, verdict);

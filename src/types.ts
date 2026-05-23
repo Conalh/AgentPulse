@@ -248,6 +248,13 @@ export interface TrajectoryOptions {
    *  TrajectoryVerdict.sequence. Computed by analyzeSequences() in
    *  src/sequences.ts; pulse() wires it in. */
   sequence?: SequenceSignal;
+  /** v0.4.1: per-session exception baseline. Set of drift-finding
+   *  fingerprints the user has explicitly approved (via the TUI `a` key,
+   *  which writes them to `<session.cwd>/.agentpulse-exceptions.json`).
+   *  Drifts whose fingerprint is in the set are dropped before the
+   *  drifting-bucket rule fires. Strict fingerprint match only — broader
+   *  kind-based suppression is deliberately deferred. */
+  exceptions?: Set<string>;
 }
 
 // ─────────────────────────────────────────────────────────────────────

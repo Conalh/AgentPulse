@@ -95,12 +95,17 @@ export interface SessionDetailProps {
   state: SessionState | null;
   now: number;
   refreshIntervalMs: number;
+  /** v0.4.1: transient confirmation banner shown above the footer after the
+   *  user presses `a` to whitelist drift findings. The parent owns the
+   *  lifecycle (set on press, cleared by a timer); we just render. */
+  flashMessage?: string | null;
 }
 
 export function SessionDetail({
   state,
   now,
   refreshIntervalMs,
+  flashMessage = null,
 }: SessionDetailProps): React.ReactElement {
   if (!state) {
     return (
@@ -215,6 +220,12 @@ export function SessionDetail({
       {state.error && (
         <Box marginTop={1}>
           <Text color="red">Error: {state.error}</Text>
+        </Box>
+      )}
+
+      {flashMessage && (
+        <Box marginTop={1}>
+          <Text color="green">{flashMessage}</Text>
         </Box>
       )}
 

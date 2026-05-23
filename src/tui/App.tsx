@@ -15,6 +15,7 @@ import type {
   SessionState,
   SessionWatcher,
 } from '../types.js';
+import { appendExceptions } from '../exceptions.js';
 import { SessionList } from './SessionList.js';
 import { SessionDetail } from './SessionDetail.js';
 import { formatDelta } from './duration.js';
@@ -88,9 +89,26 @@ function isSubagentSession(s: SessionState): boolean {
 const HELP_LINES = [
   '↑/↓, k/j, or w/s   move selection',
   'r                  force refresh on selected session',
+  'a                  whitelist current session’s drift findings',
   '?                  toggle help',
   'q / Ctrl-C         quit',
 ];
+
+/**
+ * v0.4.1: how long the post-whitelist flash message lingers in the detail
+ * pane before clearing. 2 s is long enough to register the action but
+ * short enough that the user isn't stuck reading "refreshing…" after the
+ * refresh has already landed.
+ */
+const FLASH_DURATION_MS = 2000;
+
+/**
+ * v0.4.1: debounce window for the `a` key. Same shape as the help-toggle
+ * ref above — protects against key-hold re-firing a disk write and
+ * orchestrator refresh repeatedly. 300 ms is invisible to a single press
+ * and cleanly throttles auto-repeat.
+ */
+const A_KEY_DEBOUNCE_MS = 300;
 
 export function App({
   orchestrator,
@@ -107,6 +125,18 @@ export function App({
   const [showHelp, setShowHelp] = useState<boolean>(false);
   // v0.2.9: debounce timestamp for the help-overlay toggle. See `?` handler.
   const lastHelpToggleRef = useRef<number>(0);
+  // v0.4.1: same shape for the `a` key — a single press should not trigger
+  // multiple disk writes if the key auto-repeats.
+  const lastAKeyRef = useRef<number>(0);
+  // v0.4.1: transient flash message shown in the detail pane after a
+  // successful whitelist write. Cleared after FLASH_DURATION_MS.
+  const [flashMessage, setFlashMessage] = useState<string | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    };
+  }, []);
   // v0.3.0: brief startup splash. Flips to false after 900ms so the
   // dashboard renders in-place over the splash (alt-screen handles the
   // clear).
@@ -263,6 +293,40 @@ export function App({
       });
       return;
     }
+    // v0.4.1: `a` — whitelist the current session's drift findings. Writes
+    // an exception baseline at `<cwd>/.agentpulse-exceptions.json` and then
+    // re-pulses so the verdict clears. Debounced (key-hold protection).
+    if (input === 'a' && selectedId) {
+      const nowMs = Date.now();
+      if (nowMs - lastAKeyRef.current < A_KEY_DEBOUNCE_MS) return;
+      lastAKeyRef.current = nowMs;
+      const state = visibleStates.find((s) => s.session.id === selectedId);
+      if (!state || !state.recap) return;
+      const drifts = state.recap.verdict.drifts;
+      if (drifts.length === 0) return; // nothing to whitelist
+      const sessionCwd = state.session.cwd;
+      if (!sessionCwd) return; // no cwd → don't know where to write
+      const count = drifts.length;
+      void appendExceptions(sessionCwd, drifts)
+        .then(() => {
+          // Surface success briefly, then refresh — the refresh will clear
+          // the drift findings from the verdict, so the flash + the now-
+          // clean detail pane is the user feedback.
+          if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+          setFlashMessage(
+            `✓ whitelisted ${count} finding${count === 1 ? '' : 's'} — refreshing…`
+          );
+          flashTimerRef.current = setTimeout(() => {
+            setFlashMessage(null);
+            flashTimerRef.current = null;
+          }, FLASH_DURATION_MS);
+          return orchestrator.refresh(selectedId);
+        })
+        .catch(() => {
+          /* surfaced via SessionState.error on the next refresh */
+        });
+      return;
+    }
   });
 
   const selectedState = useMemo(
@@ -306,6 +370,7 @@ export function App({
           state={selectedState}
           now={now}
           refreshIntervalMs={refreshIntervalMs}
+          flashMessage={flashMessage}
         />
       </Box>
 
@@ -319,7 +384,7 @@ export function App({
       )}
 
       <Box paddingX={1} justifyContent="space-between">
-        <Text dimColor>↑↓ / WS select · r refresh · ? help · q quit</Text>
+        <Text dimColor>↑↓ / WS select · r refresh · a whitelist · ? help · q quit</Text>
         <Text dimColor>
           ▲<Text color="red" bold>RAGE</Text>
         </Text>
