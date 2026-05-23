@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.8] — 2026-05-23
+
+### Fixed
+
+- **Cascading "ladder" of stacked dashboards on Windows cmd.exe.** Every refresh appended a fresh dashboard below the previous one instead of redrawing in place. Cause: Ink's in-place redraws rely on cursor-up + clear-line ANSI sequences, which cmd.exe (and some other terminals) don't fully honor — the previous frame leaks into scrollback.
+
+  Fix: the TUI now enters the terminal's **alternate screen buffer** (`\x1b[?1049h`) before mounting Ink, hides the cursor, and restores both on exit. This is the same mode `htop`, `vim`, `less`, `k9s`, `lazygit`, and `btop` use — the entire dashboard lives in a separate screen that doesn't pollute scrollback, and your pre-TUI terminal contents restore cleanly when you press `q`.
+
+  Restoration runs in three places (`finally` after normal Ink exit, SIGINT/SIGTERM handler, `process.once('exit')`) so you can't get stuck in alt screen even on a hard crash.
+
 ## [0.2.7] — 2026-05-23
 
 ### Fixed

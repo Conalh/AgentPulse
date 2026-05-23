@@ -95,15 +95,51 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
     void shutdown();
   };
 
+  // v0.2.8: enter the terminal's *alternate screen buffer* before mounting
+  // Ink. This is the same mode `htop`, `vim`, `less`, `k9s`, `lazygit`, and
+  // `btop` use — the entire dashboard lives in a separate screen that
+  // restores the previous terminal contents on exit. Without this, Ink's
+  // in-place redraws relied on cursor-up + clear-line sequences, which on
+  // some terminals (notably Windows cmd.exe) don't fully clear the previous
+  // frame — every refresh appended a fresh dashboard below the previous
+  // one, producing a cascading "ladder" of stacked renders.
+  const ENTER_ALT_SCREEN = '\x1b[?1049h';
+  const EXIT_ALT_SCREEN = '\x1b[?1049l';
+  const HIDE_CURSOR = '\x1b[?25l';
+  const SHOW_CURSOR = '\x1b[?25h';
+  let inAltScreen = false;
+  const enterAltScreen = (): void => {
+    if (inAltScreen) return;
+    process.stdout.write(ENTER_ALT_SCREEN + HIDE_CURSOR);
+    inAltScreen = true;
+  };
+  const exitAltScreen = (): void => {
+    if (!inAltScreen) return;
+    process.stdout.write(SHOW_CURSOR + EXIT_ALT_SCREEN);
+    inAltScreen = false;
+  };
+
+  // Belt-and-braces: restore the terminal even on hard exits (uncaught
+  // exception, process.exit), so the user never gets stuck in alt screen
+  // with no way to recover except restarting their terminal.
+  process.once('exit', () => {
+    exitAltScreen();
+  });
+
   // SIGINT/SIGTERM fall through to Ink's exit handler, which fires onExit
   // via the App's useInput Ctrl-C branch. We *also* register a fallback
   // for environments where Ink doesn't receive the keypress (e.g. piped
   // stdin), so the watcher/orchestrator still stop cleanly.
   const onSignal = (): void => {
-    void shutdown().then(() => process.exit(0));
+    void shutdown().then(() => {
+      exitAltScreen();
+      process.exit(0);
+    });
   };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
+
+  enterAltScreen();
 
   const { waitUntilExit, unmount } = render(
     React.createElement(App, {
@@ -129,5 +165,10 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
     } catch {
       /* already unmounted */
     }
+    // Restore the user's pre-TUI terminal contents. The `process.once('exit')`
+    // hook above catches hard exits; this one handles the normal q/Ctrl-C
+    // path so the cursor reappears and prior terminal contents return BEFORE
+    // the process actually exits (cleaner UX in some shells).
+    exitAltScreen();
   }
 }
