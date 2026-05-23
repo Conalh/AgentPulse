@@ -1,19 +1,13 @@
-// STUB — replaced by Workstream A (sessions: discovery + watcher).
-// See src/types.ts for the contracts.
+/**
+ * Workstream A — Session discovery + filesystem watcher.
+ *
+ * Public surface:
+ *   - `discoverSessions(opts?)`  → one-shot scan of transcript roots
+ *   - `createSessionWatcher(opts?)` → long-lived watcher emitting
+ *     add/change/remove events
+ *
+ * Contracts live in `../types.ts`. Pure node stdlib (no external deps).
+ */
 
-import type {
-  DiscoveredSession,
-  DiscoverOptions,
-  SessionWatcher,
-  WatcherOptions,
-} from '../types.js';
-
-export async function discoverSessions(
-  _opts?: DiscoverOptions
-): Promise<DiscoveredSession[]> {
-  throw new Error('sessions.discoverSessions not yet implemented');
-}
-
-export function createSessionWatcher(_opts?: WatcherOptions): SessionWatcher {
-  throw new Error('sessions.createSessionWatcher not yet implemented');
-}
+export { discoverSessions } from './discovery.js';
+export { createSessionWatcher } from './watcher.js';
