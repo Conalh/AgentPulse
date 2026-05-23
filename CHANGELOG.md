@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.10] — 2026-05-23
+
+### Added
+
+- **Project-name inference from primary file paths.** When the slug decoder gives up and the label would otherwise fall through to `session-<id-prefix>`, the TUI now scans the recap's primary file paths for a known "umbrella" directory (`Dev`, `Code`, `projects`, `workspace`, `repos`, `work`, etc.) and uses the segment *immediately after* the umbrella as the project name.
+- Example: a session stored at `~/.claude/projects/C--/<uuid>.jsonl` (slug is just `C--`, decoder returns undefined) whose primary file is `C:\Dev\AgentPulse\src\tui\App.tsx` is now labeled `AgentPulse` instead of `session-c3d4566e`.
+- The inference is purely additive: existing decoded slugs still win, and sessions with no useful primary files still fall through to the session-id label.
+
 ## [0.2.9] — 2026-05-23
 
 ### Fixed

@@ -16,16 +16,68 @@ export interface SessionListProps {
   now: number;
 }
 
+/**
+ * v0.2.10: directories that commonly sit above a project root in a developer's
+ * workspace. When the slug decoder gives up and falls back to a session ID, we
+ * scan the recap's primary file paths for one of these — the segment *after*
+ * the umbrella is the real project name.
+ *
+ * Example: primary file `C:\Dev\AgentPulse\src\tui\App.tsx` → find `Dev` at
+ * index 1 → project name is parts[2] = `AgentPulse`.
+ */
+const UMBRELLA_DIRS: ReadonlySet<string> = new Set([
+  'dev',
+  'code',
+  'projects',
+  'project',
+  'workspace',
+  'work',
+  'repos',
+  'repo',
+  'github',
+  'gitlab',
+  'src',     // sometimes the actual workspace root, e.g. `/src/myproject/`
+  'sites',
+  'apps',
+]);
+
+function inferProjectFromPaths(paths: readonly string[]): string | undefined {
+  for (const path of paths) {
+    if (!path) continue;
+    const norm = path.replace(/\\/g, '/').replace(/^\//, '').replace(/^[a-z]:\//i, '');
+    const parts = norm.split('/').filter((p) => p.length > 0 && p !== '.');
+    for (let i = 0; i < parts.length - 1; i++) {
+      const segment = parts[i]!.toLowerCase();
+      if (UMBRELLA_DIRS.has(segment)) {
+        const candidate = parts[i + 1];
+        if (candidate && candidate.length > 0 && !/^[0-9a-f-]+$/i.test(candidate)) {
+          return candidate;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 function fallbackLabel(state: SessionState): string {
   const sess = state.session;
   if (sess.projectName && sess.projectName.length > 0) return sess.projectName;
-  // Best-effort: last path segment minus extension.
+
+  // v0.2.10: when the slug decoder gave up (sess.projectName missing or empty),
+  // try to recover the real project name from the recap's primary file paths.
+  // For sessions stored at `~/.claude/projects/C--/<uuid>.jsonl` (Claude Code
+  // run from the drive root), the slug is just `C--` and our decoder bails —
+  // but the agent's primary file is something like `C:\Dev\AgentPulse\...`,
+  // which clearly says "AgentPulse" once you skip the umbrella `Dev` dir.
+  const primaryFiles = state.recap?.enriched.primaryFiles ?? [];
+  const topClusters = Object.keys(state.recap?.enriched.pathClusters ?? {});
+  const inferred = inferProjectFromPaths([...primaryFiles, ...topClusters]);
+  if (inferred) return inferred;
+
+  // Last-ditch: last path segment of the transcript file, minus extension.
   const parts = sess.transcriptPath.split(/[\\/]/);
   const tail = parts[parts.length - 1] ?? sess.id;
   const cleaned = tail.replace(/\.jsonl$/i, '');
-  // v0.2.3 last-ditch: if we still have nothing meaningful (UUID-shaped
-  // tail), use the short session id with a "session-" prefix so the user
-  // sees something stable and recognizable instead of raw hex.
   if (/^[0-9a-f-]+$/i.test(cleaned) && cleaned.length > 6) {
     return `session-${sess.id.slice(0, 8)}`;
   }
