@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.4.0] — 2026-05-23
+
+CI-ready release. AgentPulse can now run headless, emit structured JSON, and gate CI pipelines on agent state.
+
+### Added
+
+- **`agentpulse live --once`** — headless one-shot mode. Runs discovery + initial pulse per session, prints a snapshot, exits. No TUI, no Ink deps loaded. Lazy-loads via the same `import('./once.js')` pattern the TUI uses, so `agentpulse recap` invocations stay lean.
+
+- **`--format json`** (for `--once` mode) — emits a structured snapshot of all sessions:
+
+  ```json
+  {
+    "generatedAt": 1779573228301,
+    "sessionCount": 3,
+    "bucketCounts": { "drifting": 1, "converging": 1, "idle": 1 },
+    "hasGatingFinding": true,
+    "sessions": [
+      { "id": "...", "projectName": "...", "runtime": "...",
+        "bucket": "drifting", "confidence": 0.9, "narrative": "...",
+        "signals": [...], "driftCount": 3, "transcriptPath": "..." }
+    ]
+  }
+  ```
+
+  Pipe into tmux status bars, Polybar, custom dashboards, or downstream policy tools.
+
+- **`--strict`** (for `--once` mode) — exits `1` when any session is in `drifting` or `stuck`. Drop into a GitHub Action's pre-merge check to gate on agent state without writing your own JSON parser.
+
+  ```yaml
+  - run: npx agentpulse@latest live --once --strict
+  ```
+
+### Architecture
+
+- New file `src/once.ts` owns the headless runner. Pure function over `LiveOptions`; returns an exit code.
+- `LiveOptions` gained three optional fields (`once`, `format`, `strict`); `TrajectoryVerdict` and the rendering pipeline unchanged.
+
+### Tests
+
+110 (was 104). Six new tests on the once-mode CLI surface: text format renders, JSON format parses, strict exit codes work, missing roots don't crash, invalid format is a usage error.
+
 ## [0.3.5] — 2026-05-23
 
 ### Fixed

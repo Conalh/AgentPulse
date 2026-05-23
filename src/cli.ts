@@ -42,6 +42,10 @@ Live options:
   --hide-idle               Hide sessions with zero activity in the window
   --max-sessions <N>        Cap the displayed list. Default: 10
   --show-subagents          Include subagent transcripts (agent-<hex>)
+  --once                    One-shot snapshot, no TUI. Exits when done.
+  --format <fmt>            With --once: 'text' (default) or 'json'
+  --strict                  Exit 1 if any session is drifting or stuck
+                            (CI gating; only honored with --once)
 
   -h, --help                Show this help`;
 
@@ -298,6 +302,10 @@ function parseLiveCli(
         'hide-idle': { type: 'boolean', default: false },
         'max-sessions': { type: 'string' },
         'show-subagents': { type: 'boolean', default: false },
+        // v0.4.0: headless CI mode.
+        once: { type: 'boolean', default: false },
+        format: { type: 'string' },
+        strict: { type: 'boolean', default: false },
       },
     });
   } catch (err) {
@@ -342,6 +350,14 @@ function parseLiveCli(
     maxSessions = n;
   }
 
+  const formatStr = (v.format as string | undefined) ?? 'text';
+  if (formatStr !== 'text' && formatStr !== 'json') {
+    return {
+      ok: false,
+      error: { message: `Invalid --format: ${formatStr} (expected 'text' or 'json')`, code: 2 },
+    };
+  }
+
   return {
     ok: true,
     opts: {
@@ -353,6 +369,9 @@ function parseLiveCli(
       hideIdle: Boolean(v['hide-idle']),
       maxSessions,
       showSubagents: Boolean(v['show-subagents']),
+      once: Boolean(v.once),
+      format: formatStr as 'text' | 'json',
+      strict: Boolean(v.strict),
     },
   };
 }
@@ -373,6 +392,14 @@ async function main(): Promise<void> {
     if (!parsed.ok) {
       process.stderr.write(parsed.error.message + '\n');
       process.exit(parsed.error.code);
+    }
+    // v0.4.0: --once routes to the headless snapshot runner instead of
+    // mounting Ink. No TUI deps loaded, exits when done, honors --strict
+    // for CI gating. The TUI path stays untouched.
+    if (parsed.opts.once) {
+      const { runOnceMode } = await import('./once.js');
+      const code = await runOnceMode(parsed.opts);
+      process.exit(code);
     }
     const { runLiveTui } = await import('./tui/index.js');
     await runLiveTui(parsed.opts);

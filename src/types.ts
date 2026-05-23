@@ -424,4 +424,15 @@ export interface LiveOptions {
    *  ephemeral tooling artifacts, not the developer's own work.
    *  v0.2.3 addition. */
   showSubagents?: boolean;
+  /** v0.4.0: one-shot mode. Run discovery, pulse every session once, emit
+   *  output, and exit. No TUI. The headless dashboard for cron jobs,
+   *  tmux status bars, and CI checks. */
+  once?: boolean;
+  /** v0.4.0: output format for `--once` mode. `'text'` (default) writes a
+   *  human-readable summary; `'json'` writes a structured snapshot. */
+  format?: 'text' | 'json';
+  /** v0.4.0: CI-gating exit code. When true AND any session ends up in
+   *  `drifting` or `stuck`, the process exits 1 instead of 0. Only honored
+   *  in `--once` mode (the interactive TUI ignores it). */
+  strict?: boolean;
 }
