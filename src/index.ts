@@ -12,7 +12,10 @@ export * from './types.js';
 // Parallel build agents will fill these in. The stubs below let
 // downstream callers wire the pipeline before all layers are implemented.
 
-export { parseTranscript } from './parser.js';
+// v0.5.0: Layer 1 (transcript parser) lives in agent-gov-core@1.1.0.
+// We re-export it as `parseTranscript` here so v0.4.x callers don't churn —
+// the canonical name in agent-gov-core is `parseTranscriptDir`.
+export { parseTranscriptDir as parseTranscript } from 'agent-gov-core';
 export { enrichWindow } from './enrich.js';
 export { classifyTrajectory, readOutcomeSignal } from './trajectory.js';
 export { renderRecap } from './narrative.js';
@@ -25,7 +28,7 @@ export { analyzeSequences } from './sequences.js';
  * to the individual layer functions only when you need to inspect or
  * substitute an intermediate stage.
  */
-import { parseTranscript } from './parser.js';
+import { parseTranscriptDir } from 'agent-gov-core';
 import { enrichWindow } from './enrich.js';
 import { classifyTrajectory, readOutcomeSignal } from './trajectory.js';
 import { analyzeSequences } from './sequences.js';
@@ -62,7 +65,7 @@ export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
   const windowMs = opts.windowMs ?? 20 * 60 * 1000;
   const startAt = endAt - windowMs;
 
-  const events = await parseTranscript(opts.transcriptDir, {
+  const events = await parseTranscriptDir(opts.transcriptDir, {
     since: startAt,
     until: endAt,
     silent: opts.silent,

@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.5.0] — 2026-05-23
+
+### Parser surface moved to `agent-gov-core@1.1.0`
+
+The Layer 1 transcript parser — `parseTranscript`, the per-runtime Claude Code / Cursor / Codex modules, and the `TranscriptEvent` / `EventKind` / `Runtime` / `ParseOptions` types — has been promoted into `agent-gov-core` as of its v1.1.0 release. AgentPulse v0.5.0 deletes its vendored copies and consumes the substrate version.
+
+This was the v0.2/v1.1 cleanup the parser's v0.1 vendoring note flagged. SessionTrail had been carrying its own copy too; both tools now share one parser surface so format updates land once and propagate everywhere.
+
+### Removed (from AgentPulse's source tree)
+
+- `src/parser.ts` (206 lines) — the top-level `parseTranscript()` walker
+- `src/parsers/claude-code.ts` (179 lines) — Claude Code / Cursor envelope parser
+- `src/parsers/codex.ts` (178 lines) — Codex `response_item` / `session_meta` parser
+- `src/parsers/util.ts` (134 lines) — shared helpers (`coerceTimestamp`, `interpolateTimestamps`, `extractToolResultText`, etc.)
+
+Total: 697 lines deleted; identical surface lives in `agent-gov-core/src/parsers/`.
+
+### Changed
+
+- `src/index.ts` now does `export { parseTranscriptDir as parseTranscript } from 'agent-gov-core'` — the public `parseTranscript` name is preserved as a backwards-compat alias so v0.4.x library consumers keep working unchanged. The internal `pulse()` runner imports `parseTranscriptDir` directly.
+- `src/types.ts` re-exports `TranscriptEvent`, `EventKind`, `Runtime`, `ParseOptions` from `agent-gov-core` so internal AgentPulse imports (`import type { TranscriptEvent } from '../types.js'`) keep working without churn across enrich.ts, trajectory.ts, sequences.ts, parser.test.mjs, etc.
+- `package.json` peer pin bumped: `agent-gov-core: ^1.0.0` → `^1.1.0`. The caret picks up future substrate patches/minors automatically.
+- The aggregate "skipped N malformed lines" warning prefix changed from `[agentpulse:parser]` to `[transcript-parser]` (brand-neutral, since multiple suite tools now share the parser).
+
+### Compatibility
+
+- **Library consumers** of AgentPulse (anyone using `import { parseTranscript } from 'agentpulse'`): no change. The alias keeps the v0.4.x API alive.
+- **CLI users** of AgentPulse: no change. Same flags, same output.
+- **Internal AgentPulse layers** (enrich, trajectory, sequences, narrative): no change. The Layer 1 types are re-exported from types.ts as before.
+
+### Tests
+
+163 (unchanged from v0.4.8). The existing `test/parser.test.mjs` keeps the same coverage; its import path flipped from `../dist/parser.js` to `../dist/index.js` and the test names + assertions are untouched. agent-gov-core@1.1.0 ships six additional parser tests at the substrate layer — total parser coverage across the two repos goes up, not down.
+
+### Publishing order
+
+`agent-gov-core@1.1.0` must publish to npm before `@conalh/agentpulse@0.5.0` — the caret pin `^1.1.0` won't resolve otherwise. The dual-publish dance:
+
+```sh
+# 1. Publish substrate first.
+cd /path/to/agent-gov-core
+npm publish
+
+# 2. Refresh AgentPulse's lockfile against the registry copy.
+cd /path/to/AgentPulse
+npm install agent-gov-core@^1.1.0
+npm test    # 163 should still pass
+
+# 3. Publish AgentPulse.
+npm publish --access=public
+```
+
 ## [0.4.8] — 2026-05-23
 
 ### Changed — `a` is now a two-stage confirm

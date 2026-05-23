@@ -198,7 +198,7 @@ Deterministic pipeline. Each layer is pure where it can be; all layers share the
 
 | Layer | File | Input → Output |
 | --- | --- | --- |
-| 1. Parser | `src/parser.ts` | Claude Code / Cursor / Codex JSONL → `TranscriptEvent[]` |
+| 1. Parser | `agent-gov-core/parsers/` (v1.1.0+) | Claude Code / Cursor / Codex JSONL → `TranscriptEvent[]` |
 | 2. Enrichment | `src/enrich.ts` | events → keywords, cwd-relative path clusters, action classes |
 | 2.5. Sequences | `src/sequences.ts` | events → ordered-pattern signal (`tdd_loop` / `stuck_loop` / `refuse_to_verify` / `exploratory_edit`) |
 | 3. Outcome | `src/trajectory.ts` | events → verification trend, user tone, completion verbs, idle gap |
@@ -219,7 +219,7 @@ Live infrastructure on top:
 - **Local by default.** Zero network calls in any code path.
 - **Deterministic.** Same transcript window in, same verdict out. No model drift, no API outages, no rate limits.
 - **MIT.** No telemetry. No commercial offering.
-- **Substrate-built.** Wires [`agent-gov-core`](https://github.com/Conalh/agent-gov-core) primitives where the contract overlaps. The substrate's parser, Finding schema, and detector library are the eventual home for code currently vendored here (see `CHANGELOG.md` for the v0.2/v1.1 cleanup path).
+- **Substrate-built.** Wires [`agent-gov-core`](https://github.com/Conalh/agent-gov-core) primitives where the contract overlaps. The Layer 1 transcript parser lives in `agent-gov-core@1.1.0+` (promoted out of AgentPulse v0.5.0 — see CHANGELOG); the Finding schema and detector library follow the same pattern.
 
 ## Windows terminal note
 

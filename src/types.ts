@@ -13,49 +13,23 @@
  * Layer 5 → PulseRecap                      (narrative + CLI, in src/narrative.ts + src/cli.ts)
  */
 
-import type { Finding } from 'agent-gov-core';
+import type { Finding, Runtime, TranscriptEvent } from 'agent-gov-core';
 
 // ─────────────────────────────────────────────────────────────────────
 // Layer 1 — Parser output
+//
+// v0.5.0: re-exported from agent-gov-core@1.1.0 (the canonical home for
+// transcript-event shapes, shared across the gov-suite). Pre-v0.5 these
+// were defined locally; they're kept re-exported here so internal AgentPulse
+// imports don't have to churn and any consumer pinning AgentPulse-as-library
+// keeps working.
 // ─────────────────────────────────────────────────────────────────────
 
-export type Runtime = 'claude-code' | 'cursor' | 'codex' | 'unknown';
-
-export type EventKind =
-  | 'user_message'
-  | 'assistant_message'
-  | 'tool_use'
-  | 'tool_result'
-  | 'system';
-
-/**
- * A single normalized event from any supported transcript format.
- * Cross-runtime fields are normalized; runtime-specific fields go in `raw`.
- */
-export interface TranscriptEvent {
-  /** Epoch milliseconds. If the transcript line had no timestamp, parser SHOULD
-   *  interpolate from surrounding events; if it can't, set to 0 and the
-   *  windowing layer will drop. */
-  timestamp: number;
-  runtime: Runtime;
-  kind: EventKind;
-  /** Plain-text content for user_message / assistant_message. */
-  text?: string;
-  /** Tool name for tool_use (e.g. 'Read', 'Bash', 'WebFetch'). */
-  toolName?: string;
-  /** Tool input arguments for tool_use. Shape varies by tool. */
-  toolInput?: Record<string, unknown>;
-  /** Tool result content for tool_result. */
-  toolResultText?: string;
-  /** Tool result exit code if shell-like (Bash). Undefined when N/A. */
-  toolResultExitCode?: number;
-  /** Per-message working directory if the runtime supplied it. */
-  cwd?: string;
-  /** Opaque tool-use ID linking tool_use → tool_result pairs. */
-  toolUseId?: string;
-  /** Original parsed object for debugging / runtime-specific consumers. */
-  raw?: unknown;
-}
+export type {
+  EventKind,
+  Runtime,
+  TranscriptEvent,
+} from 'agent-gov-core';
 
 // ─────────────────────────────────────────────────────────────────────
 // Layer 2 — Enrichment output
@@ -206,18 +180,14 @@ export interface PulseRecap {
 
 // ─────────────────────────────────────────────────────────────────────
 // Cross-cutting
+//
+// v0.5.0: `ParseOptions` moved to agent-gov-core@1.1.0 alongside the
+// parser surface and is re-exported from there. Same fields, same
+// semantics — the TUI still passes `silent: true` to keep parser warnings
+// off the screen during refresh ticks.
 // ─────────────────────────────────────────────────────────────────────
 
-export interface ParseOptions {
-  /** Filter to events at or after this epoch ms. */
-  since?: number;
-  /** Filter to events at or before this epoch ms. */
-  until?: number;
-  /** Suppress the "skipped N malformed lines" warning. The TUI sets this to
-   *  true on every refresh because `console.warn` writes interfere with
-   *  Ink's screen redraw and cause whole-window flicker. v0.2.5 addition. */
-  silent?: boolean;
-}
+export type { ParseOptions } from 'agent-gov-core';
 
 export interface EnrichOptions {
   /** Number of keywords to retain. Default 5. */

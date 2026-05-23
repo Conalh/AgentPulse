@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parseTranscript } from '../dist/parser.js';
+// v0.5.0: parseTranscript now re-exports `parseTranscriptDir` from
+// agent-gov-core@1.1.0 via AgentPulse's top-level entry point. This test
+// keeps the same coverage shape — the parser surface is identical, just
+// imported from the substrate now.
+import { parseTranscript } from '../dist/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, 'fixtures');
