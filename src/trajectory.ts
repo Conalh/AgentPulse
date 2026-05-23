@@ -13,6 +13,7 @@
  */
 
 import type { Finding } from 'agent-gov-core';
+import { fingerprintFinding } from 'agent-gov-core';
 import type {
   EnrichedWindow,
   OutcomeSignal,
@@ -313,6 +314,12 @@ function buildDrift(
     },
   };
   if (filePath) drift.location = { file: filePath };
+  // v0.4.1: stamp a deterministic fingerprint so the exception baseline
+  // can match this finding by id across refreshes. agent-gov-core hashes
+  // (kind, file, line, column, salientKey) — same finding on the same site
+  // produces the same fingerprint, which is exactly what we want for
+  // dedupe-against-baseline semantics.
+  drift.fingerprint = fingerprintFinding(drift);
   return drift;
 }
 
@@ -329,13 +336,26 @@ function extractFilePath(ev: TranscriptEvent): string | undefined {
 
 function detectDrifts(
   events: TranscriptEvent[],
-  repoRoot?: string
+  repoRoot?: string,
+  exceptions?: Set<string>
 ): {
   drifts: Finding[];
   signals: string[];
 } {
   const drifts: Finding[] = [];
   const signals: string[] = [];
+
+  // v0.4.1: helper that pairs a drift with its signal and applies the
+  // exception baseline. When a drift's fingerprint is in the user-approved
+  // set, BOTH the finding and its matching signal are dropped — otherwise
+  // the signal would still surface in `verdict.signals` and leak the
+  // suppressed concern back into the narrative.
+  function pushIfNotExcepted(drift: Finding, signal: string): void {
+    if (drift.fingerprint && exceptions?.has(drift.fingerprint)) return;
+    drifts.push(drift);
+    signals.push(signal);
+  }
+
   for (const ev of events) {
     if (ev.kind !== 'tool_use') continue;
 
@@ -346,15 +366,15 @@ function detectDrifts(
       const normalized = filePath.replace(/\\/g, '/');
       for (const rule of PRIVILEGED_PATH_RULES) {
         if (rule.pattern.test(normalized)) {
-          drifts.push(
+          pushIfNotExcepted(
             buildDrift(
               rule.slug,
               `${ev.toolName ?? 'tool'} touched privileged path (${rule.label}): ${filePath}`,
               ev,
               filePath
-            )
+            ),
+            `privileged path: ${rule.label}`
           );
-          signals.push(`privileged path: ${rule.label}`);
           break;
         }
       }
@@ -365,14 +385,14 @@ function detectDrifts(
         (ev.toolInput && (ev.toolInput.command as unknown)) ?? ''
       );
       if (cmd && SHELL_EXFIL_RE.test(cmd)) {
-        drifts.push(
+        pushIfNotExcepted(
           buildDrift(
             'shell_exfil',
             `Bash piped network fetch into a shell: ${truncate(cmd, 120)}`,
             ev
-          )
+          ),
+          'curl|wget piped to shell'
         );
-        signals.push('curl|wget piped to shell');
       }
     }
 
@@ -385,15 +405,15 @@ function detectDrifts(
         ? isOutsideRepoRoot(filePath, repoRoot)
         : OUTSIDE_REPO_RE.test(normalized);
       if (outsideRepo) {
-        drifts.push(
+        pushIfNotExcepted(
           buildDrift(
             'outside_repo_write',
             `Write to path outside repo root: ${filePath}`,
             ev,
             filePath
-          )
+          ),
+          `write outside repo: ${filePath}`
         );
-        signals.push(`write outside repo: ${filePath}`);
       }
     }
   }
@@ -482,8 +502,15 @@ export function classifyTrajectory(
 
   // 1. Drifting — first priority. Detectors are on by default. Drift findings
   //    are worth surfacing even if the agent has technically gone quiet.
+  // v0.4.1: optional exceptions set filters out user-approved fingerprints
+  // BEFORE the bucket-rule check, so an exempted finding doesn't flip the
+  // verdict to `drifting` on its own.
   if (opts?.detectorsEnabled !== false) {
-    const { drifts, signals } = detectDrifts(enriched.events, opts?.repoRoot);
+    const { drifts, signals } = detectDrifts(
+      enriched.events,
+      opts?.repoRoot,
+      opts?.exceptions
+    );
     if (drifts.length > 0) {
       return makeVerdict('drifting', 0.9, uniq(signals).slice(0, 4), drifts, sequence);
     }
