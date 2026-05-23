@@ -1,0 +1,7 @@
+{"type":"user","timestamp":"2026-05-23T10:00:00.000Z","cwd":"/repo","sessionId":"cc-1","version":"1.0.0","message":{"role":"user","content":[{"type":"text","text":"Fix the failing test in src/auth.ts"}]}}
+{"type":"assistant","timestamp":"2026-05-23T10:00:05.000Z","cwd":"/repo","sessionId":"cc-1","version":"1.0.0","message":{"role":"assistant","content":[{"type":"text","text":"I'll read the file first."},{"type":"tool_use","id":"tu_read_1","name":"Read","input":{"file_path":"/repo/src/auth.ts"}}]}}
+{"type":"user","timestamp":"2026-05-23T10:00:06.000Z","cwd":"/repo","sessionId":"cc-1","version":"1.0.0","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_read_1","content":"export function login() { return null; }"}]}}
+{"type":"assistant","timestamp":"2026-05-23T10:00:10.000Z","cwd":"/repo","sessionId":"cc-1","version":"1.0.0","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_bash_1","name":"Bash","input":{"command":"npm test"}}]}}
+{"type":"user","timestamp":"2026-05-23T10:00:15.000Z","cwd":"/repo","sessionId":"cc-1","version":"1.0.0","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_bash_1","content":"all tests passed\n<exit_code>0</exit_code>"}]}}
+{"type":"assistant","timestamp":"2026-05-23T10:00:16.000Z","cwd":"/repo","sessionId":"cc-1","version":"1.0.0","message":{"role":"assistant","content":[{"type":"text","text":"Tests pass — fix complete."}]}}
+this line is not valid JSON and should be skipped

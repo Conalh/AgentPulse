@@ -1,0 +1,5 @@
+{"timestamp":"2026-05-23T11:00:00.000Z","type":"session_meta","payload":{"id":"codex-1","cwd":"/repo","originator":"codex-tui","source":"cli"}}
+{"timestamp":"2026-05-23T11:00:01.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":\"ls /repo\",\"workdir\":\"/repo\"}","call_id":"call_ls"}}
+{"timestamp":"2026-05-23T11:00:02.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_ls","output":{"text":"src\npackage.json","exit_code":0}}}
+{"timestamp":"2026-05-23T11:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"apply_patch","arguments":"*** Begin Patch\n*** Add File: README.md\n+# hi\n*** End Patch","call_id":"call_patch"}}
+{"timestamp":"2026-05-23T11:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done — README added."}]}}
