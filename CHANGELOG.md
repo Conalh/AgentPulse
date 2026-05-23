@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.4.1] — 2026-05-23
+
+The interactive whitelist — Cursor's proposal from the inspection round, now real.
+
+### Added
+
+- **Press `a` on a drifting session to whitelist its findings.** The TUI's `useInput` handler picks up `a`, reads the currently-selected session's drift findings, and appends their fingerprints to `<session.cwd>/.agentpulse-exceptions.json`. The orchestrator then refreshes the session; `pulse()` loads the updated baseline; `detectDrifts` filters out the suppressed fingerprints; the verdict re-classifies away from `drifting` instantly. UX is one keypress → bucket clears.
+- A green flash banner appears in the detail pane for 2 seconds: `"✓ whitelisted N findings — refreshing…"`. Confirms the action without nagging.
+- The footer keybinding hint and `?` help overlay both document `a` clearly.
+
+### Architecture
+
+- New `src/exceptions.ts` exports `loadExceptions(searchPath?)` and `appendExceptions(searchPath, drifts)`. Both accept a directory or a full file path; both fail silently on missing/malformed input (exceptions are an optional baseline, not required config).
+- New `PulseOptions.exceptionsPath?: string`. Falls back to `repoRoot` when unset, so the orchestrator inherits exception filtering for free — `session.cwd` was already being threaded as `repoRoot`. **Zero orchestrator changes needed.**
+- New `TrajectoryOptions.exceptions?: Set<string>`. `detectDrifts` filters out matching findings AND their paired signal-array entries together (a naive drift-only filter would have leaked the suppressed concern back into the narrative).
+- `buildDrift` now stamps `Finding.fingerprint = fingerprintFinding(drift)` so the same drift at the same site hashes to the same id across refreshes. Stable fingerprints are what makes the whitelist work — without them, the lookup would miss after the next pulse.
+
+### File format
+
+```json
+{
+  "version": 1,
+  "exceptions": [
+    {
+      "kind": "agent_pulse.live_drift_shell_exfil",
+      "fingerprint": "a1b2c3...",
+      "approvedAt": "2026-05-23T22:00:00.000Z",
+      "note": "approved by user via TUI"
+    }
+  ]
+}
+```
+
+Lives at the session's working-directory root. Commit it to your repo and your CI gating (`agentpulse live --once --strict`) honors the same baseline.
+
+### UX detail
+
+- `a` is 300 ms-debounced (same pattern as the v0.2.9 `?` debounce). Holding the key down doesn't trigger dozens of disk writes.
+- Pressing `a` on a non-drifting session is a silent no-op. Pressing it on a session without a `cwd` is also a no-op (no way to know where the exception file should live).
+
+### Tests
+
+117 (was 110). Seven new tests on the exceptions layer: missing-file, valid-file, malformed-file (silent failure), create-on-append, dedupe-by-fingerprint, append-roundtrip, direct-file-path.
+
 ## [0.4.0] — 2026-05-23
 
 CI-ready release. AgentPulse can now run headless, emit structured JSON, and gate CI pipelines on agent state.
