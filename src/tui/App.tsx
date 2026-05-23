@@ -102,30 +102,47 @@ export function App({
     return initial.length > 0 ? initial[0]!.session.id : null;
   });
 
-  // Subscribe to orchestrator updates.
+  // v0.2.11: debounce orchestrator + watcher events into a single batched
+  // setStates call. Pre-fix, sessions discovered or refreshed in rapid
+  // succession each triggered an immediate re-render. Ink's diff calculation
+  // can't always finish one frame before the next is queued, and on cmd.exe
+  // the result was stacked dashboards with mismatched session counts visible
+  // simultaneously. 100 ms collapses a burst of events into one render —
+  // imperceptible delay to a human but cuts render-thrash entirely.
   useEffect(() => {
-    const handler = (_e: OrchestratorEvent): void => {
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+    const flush = (): void => {
+      pendingTimer = null;
       setStates(orchestrator.states());
+    };
+    const handler = (_e: OrchestratorEvent): void => {
+      if (pendingTimer) return; // already scheduled — coalesce
+      pendingTimer = setTimeout(flush, 100);
     };
     orchestrator.on(handler);
     return () => {
+      if (pendingTimer) clearTimeout(pendingTimer);
       orchestrator.off(handler);
     };
   }, [orchestrator]);
 
   // Watcher events are largely handled outside (the wiring lives in
   // runLiveTui), but we also listen here so the App can react to add/remove
-  // for selection-fallback purposes.
+  // for selection-fallback purposes. Same 100 ms debounce — multiple file
+  // changes across sessions used to fire bursts of setStates.
   useEffect(() => {
-    const handler = (_e: SessionEvent): void => {
-      // The orchestrator listener already drives the redraw via the
-      // session-added / session-removed event, but if the watcher fires
-      // before the orchestrator settles we still want the snapshot to
-      // include the new session.
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+    const flush = (): void => {
+      pendingTimer = null;
       setStates(orchestrator.states());
+    };
+    const handler = (_e: SessionEvent): void => {
+      if (pendingTimer) return;
+      pendingTimer = setTimeout(flush, 100);
     };
     watcher.on(handler);
     return () => {
+      if (pendingTimer) clearTimeout(pendingTimer);
       watcher.off(handler);
     };
   }, [watcher, orchestrator]);

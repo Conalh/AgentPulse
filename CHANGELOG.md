@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.11] — 2026-05-23
+
+### Fixed
+
+- **Stacked dashboard renders when discoveries or refreshes fire in rapid succession.** Pre-fix, every orchestrator event (`session-added`, `session-updated`, `session-removed`) and every watcher event (`add`, `change`, `remove`) immediately called `setStates(...)`, triggering an Ink re-render. When 5 sessions were discovered in the first 200ms, that's 5 setStates → 5 renders. Ink's diff calculation couldn't always finish one frame before the next was queued, especially on cmd.exe, producing the stacked-dashboards-with-mismatched-counts you could capture in a screenshot.
+- 100 ms debounce on both event sources collapses bursts into a single batched setStates. Imperceptible delay (you still see live updates as your agent works) but cuts render-thrash entirely. Combined with the v0.2.8 alt-screen-buffer fix and the v0.2.9 `?` debounce, the rendering layer should now be stable across all the spam-test cases.
+
 ## [0.2.10] — 2026-05-23
 
 ### Added
