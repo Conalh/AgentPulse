@@ -98,12 +98,21 @@ export function deriveProjectName(
   const decoded = slug ? decodeSlug(slug) : undefined;
 
   // Fallback: if the decoded slug is junk (empty, single letter that looks
-  // like a drive prefix, or "C--"-shaped leftover), prefer the cwd basename.
+  // like a drive prefix, "C--"-shaped leftover, or — added in v0.4.6 — a
+  // date-shape segment from Codex's `~/.codex/sessions/<year>/<month>/<day>/`
+  // layout), prefer the cwd basename.
+  //
+  // Codex stores transcripts at `~/.codex/sessions/2026/05/23/rollout-xxx.jsonl`,
+  // which would otherwise surface as a project named "2026" in the dashboard
+  // (the year segment is the slug). None of these date-shape strings are ever
+  // real project names; treat them as junky and force the cwd fallback.
   const looksJunky =
     !decoded ||
     /^[a-z]$/i.test(decoded) ||
     /^[a-z]--+$/i.test(decoded) ||
-    /^-+$/.test(decoded);
+    /^-+$/.test(decoded) ||
+    /^\d{1,4}$/.test(decoded) ||              // year / month / day segment
+    /^\d{4}-\d{2}-\d{2}$/.test(decoded);      // ISO date
 
   if (looksJunky && cwd) {
     const fromCwd = basename(cwd);
@@ -116,7 +125,13 @@ export function deriveProjectName(
   // raw `C--` rows still surfaced in the dashboard. Now: when even the
   // stripped slug is empty, return undefined so the UI falls through to
   // its own `session-<id-prefix>` fallback rather than showing junk.
+  //
+  // v0.4.6: date-shape slugs (`2026`, `05`, `2026-05-23`) get the same
+  // undefined treatment — never want to render those as a "project name".
   if (looksJunky && slug) {
+    const isDateShape =
+      /^\d{1,4}$/.test(slug) || /^\d{4}-\d{2}-\d{2}$/.test(slug);
+    if (isDateShape) return undefined;
     const stripped = slug.replace(/^[a-z]--+/i, '');
     return stripped.length > 0 ? stripped : undefined;
   }

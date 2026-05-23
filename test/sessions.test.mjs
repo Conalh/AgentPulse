@@ -241,3 +241,48 @@ test('deriveProjectName falls back to cwd basename when slug decodes to a single
     'C'
   );
 });
+
+test('deriveProjectName treats Codex date-shape slugs as junky and prefers cwd (v0.4.6)', () => {
+  // Regression: real screenshot showed `2026 (codex)` because Codex stores
+  // transcripts at `~/.codex/sessions/<year>/<month>/<day>/<rollout>.jsonl`
+  // and the year segment was leaking through as a project name. None of
+  // those date shapes are ever real project names.
+  const root = '/.codex/sessions';
+  const transcript = '/.codex/sessions/2026/05/23/rollout-abc123.jsonl';
+
+  // With cwd (Codex's session_meta.payload.cwd) → use the real project.
+  assert.equal(
+    deriveProjectName(transcript, root, '/Users/conno/Dev/RealProject'),
+    'RealProject',
+    'date-shape slug + cwd → cwd basename',
+  );
+
+  // Without cwd → undefined, so the UI's file-path inference (or last-ditch
+  // session-<id-prefix> fallback) takes over instead of rendering "2026".
+  assert.equal(
+    deriveProjectName(transcript, root),
+    undefined,
+    'date-shape slug + no cwd → undefined (never "2026")',
+  );
+
+  // ISO-date-shape slug → same treatment.
+  const isoTranscript = '/.codex/sessions/2026-05-23/rollout-xyz.jsonl';
+  assert.equal(
+    deriveProjectName(isoTranscript, root),
+    undefined,
+    'ISO-date-shape slug + no cwd → undefined',
+  );
+  assert.equal(
+    deriveProjectName(isoTranscript, root, '/Users/conno/Dev/Demo'),
+    'Demo',
+    'ISO-date-shape slug + cwd → cwd basename',
+  );
+
+  // Sanity check: a real Codex-stored project (rare but possible — older
+  // Codex layouts use a flat slug at top level) still works as before.
+  assert.equal(
+    deriveProjectName('/.codex/sessions/real-project/r1.jsonl', root),
+    'project',
+    'non-date Codex slug still decodes normally',
+  );
+});

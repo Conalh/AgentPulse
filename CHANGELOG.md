@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.4.6] — 2026-05-23
+
+### Fixed — Codex sessions rendered as "2026"
+
+Codex stores transcripts at `~/.codex/sessions/<year>/<month>/<day>/<rollout>.jsonl`, and the year segment was leaking through `deriveProjectName` as a "project name" — the screenshot review showed a literal `2026 (codex)` row. None of the date-shape segments (year, month, day, ISO date) are ever real project names.
+
+- **`src/sessions/discovery.ts`** — extended the `looksJunky` patterns in `deriveProjectName` to match pure-digit segments (`\d{1,4}`) and ISO dates (`\d{4}-\d{2}-\d{2}`). Junky slugs now force the cwd-basename fallback that the Windows `C--` case already used; when cwd is also missing, the function returns `undefined` so the UI's `inferProjectFromPaths` (which walks the recap's primary file paths) takes over.
+- The Codex parser already extracts `cwd` from `session_meta.payload.cwd` in `extractCwdFromFirstLine`, so cwd is typically available and the fix lands cleanly — most rows now show the real project name (e.g. `AgentPulse (codex)` instead of `2026 (codex)`).
+
+### Tests
+
+143 (was 142). One new `sessions.test.mjs` test covering:
+- date-shape slug + cwd → cwd basename wins
+- date-shape slug + no cwd → undefined (never the date)
+- ISO date shape gets the same treatment
+- Sanity: non-date Codex slugs still decode normally
+
 ## [0.4.5] — 2026-05-23
 
 ### Changed — session list now clusters by project
