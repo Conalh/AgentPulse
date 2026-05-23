@@ -62,6 +62,10 @@ export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
   const outcome = readOutcomeSignal(enriched);
   const verdict = classifyTrajectory(enriched, outcome, {
     detectorsEnabled: opts.detectorsEnabled ?? true,
+    // v0.3.1: thread repoRoot into drift detection so a Write outside the
+    // session's repo is flagged regardless of whether it hits the legacy
+    // hardcoded prefixes (`/tmp/`, `/var/`, `~/`).
+    repoRoot: opts.repoRoot,
   });
 
   return renderRecap(enriched, outcome, verdict);

@@ -256,6 +256,23 @@ const SHELL_EXFIL_RE =
  */
 const OUTSIDE_REPO_RE = /^(\/tmp\/|\/var\/|~\/)/;
 
+/**
+ * v0.3.1: when a repoRoot is provided, anything outside it counts as
+ * outside-repo (the whole point of repo-rooted gating). Normalizes Windows
+ * backslashes and drive-letter case so a write to `C:/Dev/Other/foo.py`
+ * from a session rooted at `c:\dev\fit-ontology` correctly flags as drift.
+ */
+function isOutsideRepoRoot(filePath: string, repoRoot: string): boolean {
+  const norm = (s: string): string =>
+    s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const f = norm(filePath);
+  const r = norm(repoRoot);
+  if (r.length === 0) return false;
+  // Treat the root itself as "inside" — a Write to the project dir is fine.
+  if (f === r) return false;
+  return !f.startsWith(r + '/');
+}
+
 function buildDrift(
   slug: string,
   message: string,
@@ -293,7 +310,10 @@ function extractFilePath(ev: TranscriptEvent): string | undefined {
   return typeof candidate === 'string' ? candidate : undefined;
 }
 
-function detectDrifts(events: TranscriptEvent[]): {
+function detectDrifts(
+  events: TranscriptEvent[],
+  repoRoot?: string
+): {
   drifts: Finding[];
   signals: string[];
 } {
@@ -340,8 +360,14 @@ function detectDrifts(events: TranscriptEvent[]): {
     }
 
     if (ev.toolName === 'Write' && filePath) {
+      // v0.3.1: prefer repoRoot-relative comparison when available; fall back
+      // to the legacy hardcoded-prefix check for backwards compat with
+      // callers that don't pass a repo root yet.
       const normalized = filePath.replace(/\\/g, '/');
-      if (OUTSIDE_REPO_RE.test(normalized)) {
+      const outsideRepo = repoRoot
+        ? isOutsideRepoRoot(filePath, repoRoot)
+        : OUTSIDE_REPO_RE.test(normalized);
+      if (outsideRepo) {
         drifts.push(
           buildDrift(
             'outside_repo_write',
@@ -415,7 +441,7 @@ export function classifyTrajectory(
   // 1. Drifting — first priority. Detectors are on by default. Drift findings
   //    are worth surfacing even if the agent has technically gone quiet.
   if (opts?.detectorsEnabled !== false) {
-    const { drifts, signals } = detectDrifts(enriched.events);
+    const { drifts, signals } = detectDrifts(enriched.events, opts?.repoRoot);
     if (drifts.length > 0) {
       return makeVerdict('drifting', 0.9, uniq(signals).slice(0, 4), drifts);
     }

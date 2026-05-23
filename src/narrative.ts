@@ -81,6 +81,15 @@ function renderConverging(enriched: EnrichedWindow, outcome: OutcomeSignal): str
   const cluster = tick(topCluster(enriched.pathClusters));
   const editCount = enriched.actionCounts.editing ?? 0;
   const primaryFile = tick(enriched.primaryFiles[0]);
+  // v0.3.1: gate verification claims on actual verification SIGNAL, not raw
+  // count. `npm test` runs without parseable pass/fail output still bump
+  // actionCounts.verification, but verificationTrend stays `no_data`. Pre-fix,
+  // the narrative said "ran the tests after each change" + "Looks like it
+  // solved it" while the Signals line right below admitted "no verification
+  // data — confidence reflects that". Don't lie next to the truth.
+  const hasVerificationSignal =
+    outcome.verificationTrend === 'improving' ||
+    outcome.verificationTrend === 'flat_pass';
 
   const parts: string[] = [
     'Your agent has been working on **' + topic + '** for **' + duration + '**.',
@@ -92,7 +101,10 @@ function renderConverging(enriched: EnrichedWindow, outcome: OutcomeSignal): str
   } else if (editCount > 0) {
     middle.push('made **' + editCount + '** changes');
   }
-  if ((enriched.actionCounts.verification ?? 0) > 0) {
+  // Only claim "ran the tests after each change" when there's actual
+  // verification SIGNAL (improving or flat_pass). Counting npm test
+  // invocations without parseable output isn't enough.
+  if (hasVerificationSignal && (enriched.actionCounts.verification ?? 0) > 0) {
     middle.push('ran the tests after each change');
   }
   if (middle.length > 0) {
@@ -100,10 +112,14 @@ function renderConverging(enriched: EnrichedWindow, outcome: OutcomeSignal): str
   }
   if (outcome.verificationTrend === 'improving') {
     parts.push('Tests went from failing to passing.');
+    parts.push('Looks like it solved it.');
   } else if (outcome.verificationTrend === 'flat_pass') {
     parts.push('Tests are green.');
+    parts.push('Looks like it solved it.');
   }
-  parts.push('Looks like it solved it.');
+  // v0.3.1: NO closing "Looks like it solved it" when verification is
+  // missing or failing — that's an overconfident claim that the original
+  // narrative made unconditionally.
   return parts.join(' ');
 }
 
@@ -227,13 +243,42 @@ function renderIdle(enriched: EnrichedWindow): string {
 }
 
 function renderDrifting(enriched: EnrichedWindow, verdict: TrajectoryVerdict): string {
+  // v0.3.1: bucket-aware lede. Pre-fix, every drift was described as "things
+  // outside the project" — which is genuinely wrong for `.ssh/id_rsa` reads
+  // (those are PRIVILEGED PATH access, not "outside the project"), and
+  // misleading for `curl|sh` (piped network exec). Now: pick the lead from
+  // the first drift's kind slug so the user sees what actually happened.
   const duration = humanDuration(enriched.durationMs);
   const driftCount = verdict.drifts.length;
   const summary = driftSummary(verdict.drifts.map((d) => d.message));
+
+  // Categorize. Kind slugs come from trajectory.ts buildDrift() as
+  // `agent_pulse.live_drift_<slug>`; we look at the suffix.
+  const slugs = verdict.drifts.map((d) => {
+    const k = String(d.kind ?? '');
+    const idx = k.lastIndexOf('_drift_');
+    return idx >= 0 ? k.slice(idx + 7) : k;
+  });
+  const hasPrivileged = slugs.some((s) =>
+    /(ssh|aws|kube|gnupg|credential|shadow|private)/i.test(s)
+  );
+  const hasShellExfil = slugs.some((s) => /shell_exfil/i.test(s));
+  const hasOutsideWrite = slugs.some((s) => /outside_repo|write_outside/i.test(s));
+
+  let lede: string;
+  if (hasShellExfil) {
+    lede = '⚠ Your agent piped network fetch into a shell';
+  } else if (hasPrivileged) {
+    lede = '⚠ Your agent touched a privileged path (SSH/AWS/credentials/system config)';
+  } else if (hasOutsideWrite) {
+    lede = '⚠ Your agent wrote outside the repo root';
+  } else {
+    lede = "⚠ Your agent is doing work but it's wandering";
+  }
+
   const parts: string[] = [
-    '⚠ Your agent is doing work but its wandering. In the last **' + duration + '** it touched **' + driftCount + '** ' +
-      (driftCount === 1 ? 'thing' : 'things') +
-      ' outside the project',
+    lede + '. In the last **' + duration + '** it triggered **' + driftCount + '** ' +
+      (driftCount === 1 ? 'finding' : 'findings'),
   ];
   if (summary) parts.push(': ' + summary + '.');
   else parts.push('.');

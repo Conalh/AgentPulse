@@ -35,6 +35,12 @@ interface InternalState extends SessionState {
   timer?: NodeJS.Timeout;
   /** In-flight refresh promise — used to coalesce concurrent refresh() calls. */
   inFlight?: Promise<void>;
+  /** Set when a refresh arrives while one is already in flight. The current
+   *  refresh's `.finally` notices this and re-fires immediately so the latest
+   *  file state is read. v0.3.1: pre-fix, watcher events during an in-flight
+   *  pulse piggybacked on the running pulse and got a stale recap — the
+   *  dashboard could lag a full refresh cycle behind reality. */
+  dirty?: boolean;
 }
 
 const DEFAULT_WINDOW_MS = 20 * 60 * 1000;
@@ -84,6 +90,11 @@ export function createOrchestrator(
         transcriptDir: state.session.transcriptPath,
         windowMs,
         detectorsEnabled,
+        // v0.3.1: each session's cwd (extracted from its first transcript
+        // line at discovery time) becomes the repoRoot for drift detection.
+        // A Write outside the session's own working directory is real drift,
+        // not just writes to `/tmp/` or `~/`.
+        repoRoot: state.session.cwd,
         // v0.2.5: the orchestrator is used by the TUI; we must suppress
         // parser warnings here because console.warn writes interfere with
         // Ink's screen redraw and cause whole-window flicker on every
@@ -115,14 +126,28 @@ export function createOrchestrator(
     const state = states.get(id);
     if (!state) return Promise.resolve();
 
-    // Coalesce: if a refresh is already running for this session, the new
-    // caller piggybacks on the in-flight promise. This is the cleaner of
-    // the two suggested patterns — it means watcher floods translate to
-    // exactly one pulse() invocation per overlapping batch.
-    if (state.inFlight) return state.inFlight;
+    // v0.3.1: "running + dirty" coalesce. Pre-fix, a refresh arriving during
+    // an in-flight pulse piggybacked on the running promise and got the recap
+    // for the FILE STATE FROM BEFORE THE CHANGE. On actively-written
+    // transcripts, that meant the dashboard could lag a full refresh cycle
+    // (30s) behind reality. Now: if a refresh arrives mid-pulse, we mark the
+    // state dirty; the in-flight pulse's `.finally` notices `dirty` and
+    // immediately fires another. Watcher floods still collapse to ~2 pulses
+    // max per overlapping batch (the original + the re-fire), but we never
+    // lose a file change.
+    if (state.inFlight) {
+      state.dirty = true;
+      return state.inFlight;
+    }
 
     const promise = runPulse(state).finally(() => {
       state.inFlight = undefined;
+      if (state.dirty && !stopped && states.has(state.session.id)) {
+        state.dirty = false;
+        // Re-fire to pick up changes that arrived during the previous pulse.
+        // Fire-and-forget; if it errors, runPulse captures into state.error.
+        void refreshInternal(id);
+      }
     });
     state.inFlight = promise;
     return promise;

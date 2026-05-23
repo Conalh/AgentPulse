@@ -11,6 +11,41 @@ import type { SessionState } from '../types.js';
 import { colorFor, isLowConfidence, pillFor } from './theme.js';
 import { formatAgo, formatDelta } from './duration.js';
 
+/**
+ * v0.3.1: Render a single narrative line, parsing `**bold**` Markdown spans
+ * into Ink `<Text bold>` nodes. Pre-fix, the narrative templates use `**`
+ * for emphasis (which is the right source format for plain-text consumers),
+ * but the TUI rendered those literal asterisks — so a user saw
+ * `Your agent has been working on **your code**` instead of bolded `your code`.
+ * No external markdown lib; inline parser handles the one syntax we use.
+ */
+function MdLine({ text }: { text: string }): React.ReactElement {
+  const parts: React.ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+  while (i < text.length) {
+    const openIdx = text.indexOf('**', i);
+    if (openIdx < 0) {
+      parts.push(text.slice(i));
+      break;
+    }
+    if (openIdx > i) parts.push(text.slice(i, openIdx));
+    const closeIdx = text.indexOf('**', openIdx + 2);
+    if (closeIdx < 0) {
+      // Unclosed `**` — treat remainder as plain text rather than throw.
+      parts.push(text.slice(openIdx));
+      break;
+    }
+    parts.push(
+      <Text key={key++} bold>
+        {text.slice(openIdx + 2, closeIdx)}
+      </Text>
+    );
+    i = closeIdx + 2;
+  }
+  return <Text>{parts}</Text>;
+}
+
 export interface SessionDetailProps {
   state: SessionState | null;
   now: number;
@@ -57,7 +92,7 @@ export function SessionDetail({
       <Text dimColor>{sess.transcriptPath}</Text>
       <Box marginTop={1} flexDirection="column">
         {narrative.split('\n').map((line, i) => (
-          <Text key={i}>{line}</Text>
+          <MdLine key={i} text={line} />
         ))}
       </Box>
 

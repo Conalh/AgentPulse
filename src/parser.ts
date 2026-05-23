@@ -96,9 +96,14 @@ async function parseFile(path: string): Promise<FileParseResult> {
   let lines = 0;
   let skipped = 0;
 
-  // Once we see a codex session_meta, every subsequent line in the file
-  // is codex — stash that hint for downstream dispatch.
-  let codexSessionDetected = false;
+  // v0.3.1: Pre-fix, this set `codexSessionDetected = true` on first
+  // `session_meta` and then forced EVERY subsequent line through the codex
+  // parser. parseCodexLine's `default` branch always returns a system event
+  // (never null), which meant a mixed-runtime file (rare but real — e.g.
+  // Cursor transcripts copied into ~/.claude/projects/) would have every
+  // Anthropic line mistagged as codex. Now: only route to the codex parser
+  // when the LINE ITSELF looks like a codex shape, not based on a sticky
+  // session-wide flag.
 
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -112,11 +117,8 @@ async function parseFile(path: string): Promise<FileParseResult> {
       continue;
     }
 
-    if (isCodexSessionMeta(parsed)) {
-      codexSessionDetected = true;
-    }
-
-    if (codexSessionDetected || isCodexLine(parsed)) {
+    // Codex path: only when this specific line is a codex shape.
+    if (isCodexSessionMeta(parsed) || isCodexLine(parsed)) {
       const out = parseCodexLine(parsed);
       if (out) {
         events.push(...out);

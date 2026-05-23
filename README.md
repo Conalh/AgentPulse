@@ -4,73 +4,123 @@
 
 **Live trajectory verdict for AI coding agent sessions. Local-only. No LLM.**
 
-AgentPulse reads Claude Code, Cursor, and Codex transcripts from your machine, classifies what the agent is doing (`Converging` / `Exploring` / `Stuck` / `Done` / `Drifting`), and renders it as plain English. Designed to run on a rolling window so you can answer "what is my agent up to right now" in one glance, without trusting a cloud service or a language model to summarize it for you.
+AgentPulse watches your Claude Code, Cursor, and Codex transcript files and classifies what each agent is doing right now — `converging`, `exploring`, `stuck`, `done`, `drifting`, or `idle` — in a two-pane terminal dashboard. Deterministic templating over local signal. No outbound network calls, no language model, no cloud.
+
+```sh
+npx agentpulse@latest live
+```
+
+That's the headline command. Drop it in a terminal window next to your editor and you get an always-on read on every session in `~/.claude/projects/`, `~/.cursor/projects/`, and `~/.codex/sessions/`.
+
+Sample readout:
 
 ```
-Your agent has been working on the login bug for 18 minutes.
-It focused on src/auth/, made 3 changes to session.ts, and ran the
-auth tests after each change. Tests went from failing to passing.
-Looks like it solved it.
+Your agent has been working on the login bug for 18 minutes. It focused
+on `src/auth/`, made 3 changes to `session.ts`, and ran the tests after
+each change. Tests went from failing to passing. Looks like it solved it.
 
-Verdict: converging (high confidence)
+Verdict: ● converging (confidence 0.85)
 ```
 
 Part of the [agent-gov suite](https://github.com/Conalh/agent-gov-core).
 
 ## What makes it different
 
-There are excellent tools for AI session observability — [agenttrace](https://github.com/luoyuctl/agenttrace) does deterministic local metrics, [LangSmith](https://smith.langchain.com/) / [Langfuse](https://langfuse.com/) / [AgentOps](https://www.agentops.ai/) do production-grade tracing, and Claude Code itself ships [Session Memory](https://docs.anthropic.com/) for in-app summaries. AgentPulse fills one specific gap none of them cover:
+Several tools watch agent sessions. AgentPulse's wedge is the specific combination none of them cover:
 
-| | Local-only | No LLM | Trajectory verdict | Suite-integrated drift | PR gate |
+| | Local-only | No LLM | Trajectory verdict | Per-session live dashboard | PR gate (planned) |
 |---|---|---|---|---|---|
-| LangSmith / Langfuse / AgentOps | ❌ cloud | ❌ LLM-judge | ❌ traces only | ❌ | ⚠ |
-| Claude Session Memory | ✅ | ❌ LLM | ⚠ structured | ❌ | ❌ |
-| agenttrace | ✅ | ✅ | ❌ metrics only | ❌ | ✅ |
-| **AgentPulse** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| LangSmith / Langfuse / AgentOps | ❌ cloud | ❌ LLM-judge | ❌ traces only | ⚠ | ⚠ |
+| Claude Code Session Memory | ✅ | ❌ LLM | ⚠ structured | ❌ | ❌ |
+| [agenttrace](https://github.com/luoyuctl/agenttrace) | ✅ | ✅ | ❌ metrics only | ⚠ TUI | ✅ |
+| **AgentPulse** | ✅ | ✅ | ✅ | ✅ | 🚧 v0.4 |
 
-The wedge is the combination, not any single column. AgentPulse pairs naturally with agenttrace (metrics + health) and with the rest of the agent-gov suite (PR-time gates) to give a full picture.
+The wedge is the combination. AgentPulse pairs naturally with agenttrace (which covers cost/health metrics) and with the rest of the [agent-gov suite](https://github.com/Conalh/agent-gov-core) (which covers PR-time gates).
 
-## What it does (in one paragraph)
-
-A deterministic, no-LLM templater that takes the last N minutes of an agent's transcript, extracts keywords from the user's own messages (the semantic anchor), clusters file paths by directory, classifies tool invocations into action classes (exploration / editing / verification / external / navigation), detects sequence patterns over time (`read-read-read-edit-test` = exploratory edit; `edit-test-edit-test` = TDD; many-edits-no-tests = risky), reads outcome signals (test exit codes, user-tone tokens, idle gap), and emits a five-bucket trajectory verdict plus a plain-English recap. When the suite's existing detectors fire on the windowed events (`session_trail.privileged_path_access`, etc.), the bucket flips to `drifting` — the trajectory is "the agent is doing work, but it's wandering into stuff it shouldn't."
-
-## Install
+## `agentpulse live` — the live dashboard
 
 ```sh
-npm install agentpulse
-# or run directly via npx, no install required
-npx agentpulse@latest recap --transcript-dir ~/.claude/projects/<your-project>/ --window 20m
+agentpulse live [options]
 ```
 
-## CLI
+**Options:**
 
-```
-agentpulse recap --transcript-dir <path> [options]
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--window <duration>` | `20m` | Recap window per session (`5m`, `1h`, etc.) |
+| `--refresh <duration>` | `30s` | Background refresh cadence. Watcher fires sub-second on file changes regardless. |
+| `--roots <p1,p2,...>` | platform defaults | Override discovery roots (comma-separated) |
+| `--stale <duration>` | `1h` | Skip sessions older than this |
+| `--hide-idle` | off | Hide sessions with no activity in the window (default: visible, grey-dimmed) |
+| `--max-sessions <N>` | `10` | Cap the displayed list |
+| `--show-subagents` | off | Include `agent-<hex>` SDK-spawned subagent transcripts |
+| `--no-detectors` | off | Skip the drifting bucket entirely |
 
-  --transcript-dir <path>   Directory of transcript JSONL files (required).
-  --window <duration>       Rolling window. Default: 20m. Accepts 5m, 1h, 30s.
-  --watch                   Re-emit the recap on a fixed cadence.
-  --watch-interval <dur>    How often to re-emit in watch mode. Default: 30s.
-  --repo <path>             Repository root, for drift detection. Default: cwd.
-  --no-detectors            Skip the drift bucket entirely (no suite detectors).
-  --format <fmt>            Output format: text (default), json.
-  --output <path>           Write to file instead of stdout.
+**Keyboard:**
+
+| Key | Action |
+| --- | --- |
+| ↑ ↓ / k j / w s | Move selection |
+| r | Force refresh on selected session |
+| ? | Toggle help overlay |
+| q / Ctrl-C | Quit |
+
+**Verdict pills:**
+
+| Pill | Meaning |
+| --- | --- |
+| ● green converging | Actively editing with focus, often with verification |
+| ◐ gray exploring | Reading around, no edits yet |
+| ▲ yellow stuck | Edits + tests failing + user pushing back |
+| ■ blue done | Completion verb + idle gap |
+| ⚠ red drifting | Privileged-path access, network exec, or write outside repo |
+| ○ gray idle | Window had activity earlier OR is silent; agent is parked |
+
+## `agentpulse recap` — one-shot mode
+
+For piping into scripts, CI, or your own dashboards:
+
+```sh
+agentpulse recap --transcript-dir ~/.claude/projects/<your-project>/ --format json
 ```
+
+Same pipeline as `live`, but exits after one run. Use `--watch` for a polling re-emit loop (text or NDJSON).
 
 ## What's intentionally NOT in scope
 
-- **No LLM, anywhere.** Not for summarization, not for classification, not optional. The whole point is determinism.
+- **No LLM, anywhere.** Not for summarization, not for classification. The whole point is determinism.
 - **No outbound network calls.** Reads your local transcript files, writes to your terminal. That's it.
-- **No web UI / dashboard.** CLI first, possibly an Action for posting verdicts to PR comments later. Nothing hosted.
-- **No risky-pattern detection beyond what already lives in [SessionTrail](https://github.com/Conalh/SessionTrail).** AgentPulse leverages SessionTrail's detectors for the `drifting` bucket but doesn't reinvent them.
-- **No multi-session memory.** Each invocation reads the window and exits. State lives on disk in the transcript files.
+- **No web UI / dashboard.** TUI first, possibly a GitHub Action for PR comments later (v0.4). Nothing hosted.
+- **No multi-session memory.** Each invocation reads the window and exits.
+
+## Architecture
+
+Five-layer deterministic pipeline. Each layer is pure where it can be; all layers share the `src/types.ts` contract.
+
+| Layer | File | Input → Output |
+| --- | --- | --- |
+| Parser | `src/parser.ts` | Claude Code / Cursor / Codex JSONL → `TranscriptEvent[]` |
+| Enrichment | `src/enrich.ts` | events → keywords, cwd-relative path clusters, action classes |
+| Outcome | `src/trajectory.ts` | events → verification trend, user tone, completion verbs, idle gap |
+| Trajectory | `src/trajectory.ts` | enrichment + outcome → six-bucket verdict |
+| Narrative | `src/narrative.ts` | verdict → plain-English recap |
+
+Live infrastructure on top:
+
+- `src/sessions/` — auto-discovery + filesystem watcher
+- `src/orchestrator.ts` — multi-session pulse runner with concurrent-refresh coalescing
+- `src/tui/` — Ink TUI components
 
 ## Principles
 
-- **Local by default.** Zero network calls in any code path. Verified by the substrate's ReDoS / no-outbound test harness.
+- **Local by default.** Zero network calls in any code path.
 - **Deterministic.** Same transcript window in, same verdict out. No model drift, no API outages, no rate limits.
 - **MIT.** No telemetry. No commercial offering.
-- **Substrate-built.** Wires [`agent-gov-core`](https://github.com/Conalh/agent-gov-core) primitives (`Finding`, fingerprint, MCP canonical) for the drift bucket. No reinvention.
+- **Substrate-built.** Wires [`agent-gov-core`](https://github.com/Conalh/agent-gov-core) primitives where the contract overlaps. The substrate's parser, Finding schema, and detector library are the eventual home for code currently vendored here (see `CHANGELOG.md` for the v0.2/v1.1 cleanup path).
+
+## Windows terminal note
+
+If you're running on Windows, prefer **Windows Terminal** over the legacy cmd.exe. cmd.exe has known ANSI limitations that this project routes around (the alt-screen-buffer fix in v0.2.8 was specifically for cmd.exe). It works on cmd.exe, but Windows Terminal renders the dashboard more cleanly.
 
 ## Used with
 

@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.3.1] — 2026-05-23
+
+Honesty pass. Three independent inspection rounds (Claude / Gemini / Cursor) converged on the same diagnoses; this release is the union of their P0/P1 fixes plus alignment of the README with the code.
+
+### Fixed (real bugs)
+
+- **Orchestrator lost changes during in-flight pulse.** Pre-fix, a watcher event arriving mid-pulse piggybacked on the running promise and got a recap reflecting file state *before* the change. On actively-written transcripts, the dashboard could lag a full refresh cycle (30s) behind reality. Implemented the "running + dirty" 2-state flag: if a refresh arrives while one is in flight, `state.dirty = true`; the current pulse's `.finally` notices and immediately re-fires. Watcher floods still collapse to ~2 pulses max per batch, but no change is ever lost.
+- **Windows case-insensitive path matching in the watcher.** `--roots c:\dev\transcripts` vs. an event arriving as `C:\Dev\transcripts\...` made `rootForPath` return `undefined`, every session label fell through to `session-<id>`. Now normalized lowercase comparison on win32; returned values keep original casing.
+- **Codex parser race tagged Anthropic lines as Codex.** Once `codexSessionDetected` flipped true on a stray `session_meta`, every subsequent line was forced through the codex parser, whose default branch always returns a system event (never null) — so mixed-runtime files mistagged everything. Now: route to the codex parser only when the line itself is a codex shape, not based on a sticky flag.
+- **`repoRoot` / `--repo` was accepted but never used for drift detection.** Hardcoded prefixes (`/tmp/`, `/var/`, `~/`) meant a Write to `C:\Dev\other-project\` from a session rooted at `C:\Dev\fit-ontology\` didn't flag as drift. Now plumbed through `pulse()` → `classifyTrajectory` → `detectDrifts`. Cross-project writes correctly flag. Legacy hardcoded check still fires when `repoRoot` is undefined for backwards compat.
+- **Drifting narrative mislabeled findings.** Pre-fix, all drifts were described as "things outside the project" — wrong for `.ssh/id_rsa` reads (privileged path), misleading for `curl | sh` (piped network exec). Now bucket-aware lede: "touched a privileged path", "piped network fetch into a shell", "wrote outside the repo root", or the generic "wandering" fallback.
+- **Converging narrative claimed tests ran when verification had no signal.** Rule 4b fires when `verificationTrend === 'no_data'`; the narrative still said "ran the tests after each change" + closed with "Looks like it solved it" while the Signals line right below admitted "no verification data". Now: the "ran the tests" phrase is gated on actual verification signal (`improving` or `flat_pass`), and "Looks like it solved it" only closes when tests actually went green.
+- **Typo:** "its wandering" → "it's wandering" (collateral fix from the drifting narrative rewrite).
+
+### Fixed (UX)
+
+- **`**bold**` markdown showing literally in the TUI.** Narrative templates use `**` for emphasis (right source format for plain-text consumers), but the TUI rendered the asterisks verbatim. New `MdLine` helper in `SessionDetail` parses `**bold**` spans into Ink `<Text bold>` nodes. CLI recap text mode converts to ANSI bold escapes (`\x1b[1m...\x1b[22m`) so terminals render emphasis instead of literals.
+
+### Changed (docs)
+
+- **README rewrite.** Pre-fix, the README claimed sequence-pattern detection (`read-read-read-edit-test → exploratory edit`) that isn't implemented, and said AgentPulse "leverages SessionTrail's detectors" when `trajectory.ts` actually has inline stand-ins. Both claims removed. New README leads with `agentpulse live` (the headline feature post-v0.3), documents every `live` flag and keyboard shortcut, shows the verdict pill key, and adds a Windows terminal note. Sequence detection moved to the v0.4 plan; SessionTrail detector integration tied to the substrate v1.1.0 cleanup.
+
+### Added
+
+- **`.github/workflows/ci.yml`** — `npm test` matrix on Ubuntu + Windows, Node 20 + 22, plus a CLI smoke test (`node dist/cli.js --help`). Windows matters disproportionately for this project: half the v0.2.x changelog is Windows-specific fixes. Catching regressions on win32 in CI > catching them in screenshots from real users.
+
+### Tests
+
+85, unchanged. The bugs fixed here weren't caught by tests (they were caught by reading code carefully + dogfooding). v0.3.2 will add regression coverage for the orchestrator coalesce + the Windows path casing.
+
 ## [0.3.0] — 2026-05-23
 
 ### Added

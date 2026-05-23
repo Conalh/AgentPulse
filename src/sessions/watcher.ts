@@ -120,12 +120,24 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
     }
   }
 
+  // v0.3.1: Windows filesystems are case-insensitive. `resolve()` preserves
+  // the case the user supplied (e.g. `--roots c:\dev\transcripts`), but file
+  // events arrive in whatever case the FS reports (`C:\Dev\transcripts\...`).
+  // Pre-fix, exact-case comparison meant rootForPath returned undefined for
+  // every event on win32, the project name fell through to session-<id>, and
+  // the user saw a UUID-shaped dashboard. We normalize to lowercase on win32
+  // for the comparison only — returned values still use the original casing.
+  const isWin32 = process.platform === 'win32';
+  const norm = (s: string): string => (isWin32 ? s.toLowerCase() : s);
+
   function rootForPath(absPath: string): ResolvedRoot | undefined {
     let best: ResolvedRoot | undefined;
     let bestLen = -1;
+    const a = norm(absPath);
     for (const r of roots) {
+      const rp = norm(r.path);
       if (
-        (absPath === r.path || absPath.startsWith(r.path + '\\') || absPath.startsWith(r.path + '/')) &&
+        (a === rp || a.startsWith(rp + '\\') || a.startsWith(rp + '/')) &&
         r.path.length > bestLen
       ) {
         best = r;
@@ -217,9 +229,12 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
       schedule(abs);
     }
     // Detect removals — any known file under this root that's no longer there.
+    // Same case-insensitive normalization as rootForPath (v0.3.1).
+    const rootNorm = norm(root.path);
     for (const abs of Array.from(known.keys())) {
+      const a = norm(abs);
       if (
-        (abs === root.path || abs.startsWith(root.path + '\\') || abs.startsWith(root.path + '/')) &&
+        (a === rootNorm || a.startsWith(rootNorm + '\\') || a.startsWith(rootNorm + '/')) &&
         !seen.has(abs)
       ) {
         schedule(abs);

@@ -197,6 +197,14 @@ export interface TrajectoryOptions {
   /** Pass-through to detectors. When supplied, detectors run on the windowed
    *  events to populate `drifts[]` and (potentially) flip bucket → 'drifting'. */
   detectorsEnabled?: boolean;
+  /** v0.3.1: Repository root used for "outside repo" drift detection. When
+   *  supplied, a Write to any path NOT under this root is flagged as drift.
+   *  Pre-v0.3.1 the detector used hardcoded prefixes (`/tmp/`, `/var/`, `~/`)
+   *  which missed cross-project writes (e.g. write to
+   *  `C:\Dev\other-project\` from a session rooted at
+   *  `C:\Dev\fit-ontology\`). When undefined, falls back to the legacy
+   *  prefixes for backwards compatibility. */
+  repoRoot?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────

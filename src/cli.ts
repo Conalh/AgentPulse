@@ -69,8 +69,18 @@ export function parseDuration(s: string | undefined): number | null {
   return n * mult[unit]!;
 }
 
+/**
+ * v0.3.1: Convert `**bold**` markdown spans to ANSI bold escapes so the
+ * recap CLI's text output renders emphasis in any modern terminal instead
+ * of showing literal asterisks. The narrative source stays markdown so JSON
+ * consumers (and downstream tools) get the un-styled string verbatim.
+ */
+function mdToAnsi(s: string): string {
+  return s.replace(/\*\*(.+?)\*\*/g, '\x1b[1m$1\x1b[22m');
+}
+
 function renderText(recap: PulseRecap): string {
-  const head = recap.narrative;
+  const head = mdToAnsi(recap.narrative);
   const verdictLine = `Verdict: ${recap.verdict.bucket} (confidence ${recap.verdict.confidence.toFixed(2)})`;
   const signals =
     recap.verdict.signals.length > 0
