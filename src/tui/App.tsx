@@ -16,6 +16,7 @@ import type {
   SessionWatcher,
 } from '../types.js';
 import { appendExceptions } from '../exceptions.js';
+import { setAlias } from '../aliases.js';
 import { SessionList } from './SessionList.js';
 import { SessionDetail } from './SessionDetail.js';
 import { formatDelta } from './duration.js';
@@ -57,6 +58,7 @@ const HELP_LINES = [
   '↑/↓, k/j, or w/s   move selection',
   'r                  force refresh on selected session',
   'a                  whitelist current session’s drift findings',
+  'n                  name / rename the selected session (alias)',
   '?                  toggle help',
   'q / Ctrl-C         quit',
 ];
@@ -95,6 +97,12 @@ export function App({
   // v0.4.1: same shape for the `a` key — a single press should not trigger
   // multiple disk writes if the key auto-repeats.
   const lastAKeyRef = useRef<number>(0);
+  // v0.4.7: rename mode for the `n` key. When true, keystrokes feed
+  // `renameBuffer` instead of the normal navigation/action handlers.
+  // Enter commits (writes the alias to ~/.agentpulse/aliases.json and
+  // re-pulses); Esc cancels.
+  const [renameMode, setRenameMode] = useState<boolean>(false);
+  const [renameBuffer, setRenameBuffer] = useState<string>('');
   // v0.4.1: transient flash message shown in the detail pane after a
   // successful whitelist write. Cleared after FLASH_DURATION_MS.
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
@@ -213,6 +221,46 @@ export function App({
   // Keyboard input. Navigation operates over `visibleStates` so hidden idle
   // sessions don't appear in the up/down cycle.
   useInput((input, key) => {
+    // v0.4.7: rename mode intercepts all keystrokes except Enter / Esc /
+    // Backspace, so the user can type a name without `q` quitting or `r`
+    // refreshing mid-typing. Held in component state so the input row
+    // re-renders as the user types.
+    if (renameMode) {
+      if (key.escape) {
+        setRenameMode(false);
+        setRenameBuffer('');
+        return;
+      }
+      if (key.return) {
+        const target = selectedId;
+        const value = renameBuffer;
+        setRenameMode(false);
+        setRenameBuffer('');
+        if (target) {
+          // setAlias('', '') (empty after trim) deletes the entry — this is
+          // the intentional "clear alias" path. Caller doesn't need to know.
+          void setAlias(target, value)
+            .then(() => orchestrator.refresh(target))
+            .catch(() => {
+              /* surfaced via SessionState.error on the next refresh */
+            });
+        }
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setRenameBuffer((b) => b.slice(0, -1));
+        return;
+      }
+      // Printable single-char input only. Filter out control / meta /
+      // multi-char sequences (arrow keys produce multi-char `input` plus
+      // a key flag — those land in the upArrow/downArrow branches above,
+      // but we still guard here).
+      if (input && input.length === 1 && !key.ctrl && !key.meta) {
+        setRenameBuffer((b) => b + input);
+      }
+      return;
+    }
+
     if (input === 'q' || (key.ctrl && input === 'c')) {
       onExit();
       exit();
@@ -256,6 +304,18 @@ export function App({
       void orchestrator.refresh(selectedId).catch(() => {
         /* surfaced via SessionState.error */
       });
+      return;
+    }
+    // v0.4.7: `n` — rename / name the selected session. Drops into rename
+    // mode; subsequent keystrokes feed renameBuffer (see top of handler).
+    // Pre-fills the buffer with the current alias so the user can edit
+    // rather than just replace.
+    if (input === 'n' && selectedId) {
+      const state = visibleStates.find((s) => s.session.id === selectedId);
+      if (state) {
+        setRenameBuffer(state.alias ?? '');
+        setRenameMode(true);
+      }
       return;
     }
     // v0.4.1: `a` — whitelist the current session's drift findings. Writes
@@ -349,7 +409,16 @@ export function App({
       )}
 
       <Box paddingX={1} justifyContent="space-between">
-        <Text dimColor>↑↓ / WS select · r refresh · a whitelist · ? help · q quit</Text>
+        {renameMode ? (
+          <Text>
+            <Text dimColor>Rename: </Text>
+            <Text color="cyan">{renameBuffer}</Text>
+            <Text color="cyan">█</Text>
+            <Text dimColor>  · Enter save · Esc cancel · empty + Enter clears</Text>
+          </Text>
+        ) : (
+          <Text dimColor>↑↓ / WS select · r refresh · a whitelist · n rename · ? help · q quit</Text>
+        )}
         <Text dimColor>
           ▲<Text color="red" bold>RAGE</Text>
         </Text>

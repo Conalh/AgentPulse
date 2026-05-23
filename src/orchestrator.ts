@@ -19,6 +19,7 @@
  */
 
 import { pulse } from './index.js';
+import { loadAliases } from './aliases.js';
 import type {
   DiscoveredSession,
   OrchestratorEvent,
@@ -78,6 +79,7 @@ export function createOrchestrator(
       lastUpdated: s.lastUpdated,
       error: s.error,
       pending: s.pending,
+      alias: s.alias,
     };
   }
 
@@ -118,6 +120,18 @@ export function createOrchestrator(
       state.error = undefined;
       state.lastUpdated = Date.now();
     }
+
+    // v0.4.7: refresh the alias from the home + cwd files each pulse.
+    // Cheap (small JSON read), and means a `n`-key rename or an external
+    // edit to either file lands on the dashboard within one refresh tick.
+    // Read failures are silent — alias is a niceties layer, not required.
+    try {
+      const aliases = await loadAliases({ cwd: state.session.cwd });
+      state.alias = aliases.get(state.session.id);
+    } catch {
+      state.alias = undefined;
+    }
+
     state.pending = false;
     emit({ type: 'session-updated', state: publicState(state) });
   }

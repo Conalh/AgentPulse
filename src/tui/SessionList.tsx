@@ -125,8 +125,15 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
   // v0.4.4: pre-compute label collision counts so we only show the
   // session-id tail on rows whose project+runtime label appears 2+ times.
   // Unique rows render exactly as before (no extra visual noise).
+  //
+  // v0.4.7: aliased sessions don't participate in collision counts — when
+  // a session has a user-chosen alias, that name IS the disambiguator and
+  // the hex tail is suppressed. Counting them in would inflate other rows'
+  // collision-count and trigger spurious hex tails on rows that don't need
+  // them.
   const labelCounts = new Map<string, number>();
   for (const s of states) {
+    if (s.alias) continue;
     const key = labelCollisionKey(fallbackLabel(s), s.session.runtime);
     labelCounts.set(key, (labelCounts.get(key) ?? 0) + 1);
   }
@@ -155,11 +162,18 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
           ? `updated ${formatAgo(now, s.lastUpdated)}`
           : 'no recap yet';
 
-        // v0.4.4: when 2+ visible sessions share the same project+runtime,
-        // append a short hex tail so the list isn't three identical-looking
-        // rows. Only renders on collision — unique rows stay clean.
-        const collisionCount = labelCounts.get(labelCollisionKey(label, s.session.runtime)) ?? 1;
-        const showDisambig = collisionCount >= 2;
+        // v0.4.7: when the user has set an alias for this session, it
+        // becomes the lead element of the row label — and replaces the
+        // hex-tail disambiguator from v0.4.4 (the alias IS the disambig).
+        const alias = s.alias;
+
+        // v0.4.4: when 2+ visible sessions share the same project+runtime
+        // AND neither has an alias, append a short hex tail so the list
+        // isn't three identical-looking rows. Only renders on collision —
+        // unique or aliased rows stay clean.
+        const collisionCount =
+          alias ? 0 : labelCounts.get(labelCollisionKey(label, s.session.runtime)) ?? 1;
+        const showDisambig = !alias && collisionCount >= 2;
         const disambigSuffix = showDisambig ? ` · ${s.session.id.slice(0, DISAMBIG_ID_LEN)}` : '';
 
         // v0.2.3: compute the label truncation budget from the runtime
@@ -169,8 +183,10 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
         // wrapped to two lines, causing layout flicker on every timer tick.
         //
         // v0.4.4: also account for the disambiguator suffix when present.
+        // v0.4.7: also account for the alias prefix when present.
         const runtimeSuffix = ` (${s.session.runtime})`;
-        const reservedSuffix = runtimeSuffix.length + disambigSuffix.length;
+        const aliasPrefix = alias ? `${alias} · ` : '';
+        const reservedSuffix = runtimeSuffix.length + disambigSuffix.length + aliasPrefix.length;
         const labelBudget = Math.max(8, LABEL_COL_WIDTH - reservedSuffix - 1);
         const truncatedLabel = truncate(label, labelBudget);
 
@@ -182,6 +198,12 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
             <Text color={pillColor}>{pill}</Text>
             <Text>{'  '}</Text>
             <Box width={LABEL_COL_WIDTH}>
+              {alias && (
+                <Text bold={isSelected} color="cyan">
+                  {alias}
+                  <Text dimColor> · </Text>
+                </Text>
+              )}
               <Text bold={isSelected}>{truncatedLabel}</Text>
               {showDisambig && <Text dimColor>{disambigSuffix}</Text>}
               <Text dimColor>{runtimeSuffix}</Text>

@@ -22,7 +22,7 @@ import { SessionDetail } from '../dist/tui/SessionDetail.js';
 
 const NOW = 1_700_000_000_000;
 
-function fixtureState({ id, projectName, bucket, confidence = 0.8, drifts = [], lastUpdatedDeltaMs = 4000, narrative = 'Doing things.' }) {
+function fixtureState({ id, projectName, bucket, confidence = 0.8, drifts = [], lastUpdatedDeltaMs = 4000, narrative = 'Doing things.', alias }) {
   const session = {
     id,
     runtime: 'claude-code',
@@ -70,6 +70,7 @@ function fixtureState({ id, projectName, bucket, confidence = 0.8, drifts = [], 
     recap,
     lastUpdated: NOW - lastUpdatedDeltaMs,
     pending: false,
+    ...(alias !== undefined ? { alias } : {}),
   };
 }
 
@@ -131,6 +132,67 @@ test('SessionList disambiguates rows that share project+runtime (v0.4.4)', () =>
   // colliding row), not on the standalone row.
   const sepMatches = frame.match(/ · /g) ?? [];
   assert.equal(sepMatches.length, 3, 'disambiguator separator appears once per colliding row');
+});
+
+test('SessionList renders alias in front of the project name (v0.4.7)', () => {
+  // A single aliased session should show `CC1 · core (claude-code)` with
+  // the alias prominent and the project name following.
+  const states = [
+    fixtureState({ id: 'a', projectName: 'core', bucket: 'idle', alias: 'CC1' }),
+  ];
+  const { lastFrame } = render(
+    createElement(SessionList, { states, selectedId: 'a', now: NOW })
+  );
+  const frame = lastFrame() ?? '';
+  assert.match(frame, /CC1/, 'alias renders');
+  assert.match(frame, /core/, 'project name still renders alongside the alias');
+  assert.match(frame, /CC1.*core/, 'alias comes BEFORE the project name');
+});
+
+test('SessionList: aliased rows suppress the hex disambiguator (v0.4.7)', () => {
+  // Three sessions in the same project — two have aliases, one doesn't.
+  // The aliased ones don't need a hex tail (the alias IS the disambig).
+  // The unaliased one should also have no tail because, with the two
+  // aliased rows excluded from the collision count, only ONE row of
+  // `core (claude-code)` remains visible — no collision.
+  const states = [
+    fixtureState({ id: 'aaaaaa111111', projectName: 'core', bucket: 'idle', alias: 'CC1' }),
+    fixtureState({ id: 'bbbbbb222222', projectName: 'core', bucket: 'idle', alias: 'CC2' }),
+    fixtureState({ id: 'cccccc333333', projectName: 'core', bucket: 'idle' }),
+  ];
+  const { lastFrame } = render(
+    createElement(SessionList, { states, selectedId: 'aaaaaa111111', now: NOW })
+  );
+  const frame = lastFrame() ?? '';
+  assert.match(frame, /CC1/);
+  assert.match(frame, /CC2/);
+  // No hex tail should appear for any of the three sessions — none of the
+  // ids' first 6 chars should leak into the frame.
+  assert.doesNotMatch(frame, /aaaaaa/);
+  assert.doesNotMatch(frame, /bbbbbb/);
+  assert.doesNotMatch(frame, /cccccc/);
+});
+
+test('SessionList: aliased rows do not inflate the collision count for unaliased rows (v0.4.7)', () => {
+  // Mix: two unaliased + one aliased of the same project. The aliased
+  // one must NOT count toward the collision detection — so the two
+  // unaliased ones (count = 2) get hex tails, and the aliased one stays
+  // clean.
+  const states = [
+    fixtureState({ id: 'aaaaaa111111', projectName: 'core', bucket: 'idle', alias: 'CC1' }),
+    fixtureState({ id: 'bbbbbb222222', projectName: 'core', bucket: 'idle' }),
+    fixtureState({ id: 'cccccc333333', projectName: 'core', bucket: 'idle' }),
+  ];
+  const { lastFrame } = render(
+    createElement(SessionList, { states, selectedId: 'aaaaaa111111', now: NOW })
+  );
+  const frame = lastFrame() ?? '';
+  // CC1 has its alias and no hex tail.
+  assert.match(frame, /CC1/);
+  assert.doesNotMatch(frame, /aaaaaa/);
+  // The two unaliased ones get hex tails because they collide with each other.
+  assert.match(frame, /bbbbbb/);
+  assert.match(frame, /cccccc/);
 });
 
 test('SessionList renders empty state when there are no sessions', () => {

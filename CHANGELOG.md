@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.4.7] — 2026-05-23
+
+### Added — agent aliases
+
+When multiple agents run on the same project (e.g. two Claude Code windows + a Cursor + a Codex), even the v0.4.4 hex-tail disambiguator gets impersonal fast — you don't *want* to read `core · aaaaaa` and `core · bbbbbb`, you want `CC1` and `CC2`. v0.4.7 lets you name them.
+
+- **Press `n`** on a selected row to drop into rename mode. The dashboard's footer becomes `Rename: <buffer>█ · Enter save · Esc cancel`. Typing feeds the buffer (no other keys fire — `q` won't quit mid-rename, `r` won't refresh). Enter commits, Esc cancels. Empty + Enter clears.
+- **Aliases render in front** of the project name: `CC1 · AgentPulse (claude-code)`. The alias replaces the auto-generated hex tail from v0.4.4 — the alias IS the disambiguator.
+- **Aliased rows don't inflate collision counts.** If you alias two of three colliding rows, the lone unaliased one stays clean (no spurious tail).
+
+### Storage — two-tier, cwd wins over home
+
+Two optional JSON files (mirrors the `.agentpulse-exceptions.json` pattern):
+
+1. `<session.cwd>/.agentpulse-aliases.json` — per-project. Commit alongside your exception baseline if you want team-shared conventions.
+2. `~/.agentpulse/aliases.json` — personal default. Writes via `n`-Enter land here by default; promoting an alias to the shared file is a manual copy/paste — intentional, so a shared file never gets written without your hand.
+
+Both files share the schema:
+
+```json
+{
+  "version": 1,
+  "aliases": { "<sessionId>": "<freeform name>" }
+}
+```
+
+Load is silent on missing / malformed files — aliases are a niceties layer, not required config. Writes refuse to clobber a malformed existing file (the user can fix by hand).
+
+### Architecture
+
+- New file `src/aliases.ts` — `loadAliases({ cwd?, home? })` returns a merged `Map<sessionId, alias>`; `setAlias(sessionId, alias, { home? })` writes the home file (creates `~/.agentpulse/` on first call); `homeAliasPath(home?)` exposed for tests.
+- `src/orchestrator.ts` now calls `loadAliases({ cwd: session.cwd })` at the end of each pulse and threads the result into `SessionState.alias`. Cheap (small JSON read), runs at refresh cadence — `n`-Enter or an external file edit lands on the dashboard within one tick.
+- `SessionState` gained an optional `alias?: string` field.
+- `src/tui/SessionList.tsx` renders the alias in bold cyan in front of the project name when present; collision-count loop now skips aliased rows.
+- `src/tui/App.tsx` owns the `n`-key rename mode: `renameMode` + `renameBuffer` state, an early-return branch at the top of `useInput` that intercepts all keystrokes while typing, and a footer that swaps from keybind hints to `Rename:` while active.
+
+### Tests
+
+158 (was 143). Twelve new alias-storage tests + three new SessionList rendering tests:
+- Storage: empty / home-only / cwd-only / cwd-overrides-home / malformed-silent / non-string-rejection / mkdir-and-write / update-existing / empty-deletes / refuse-malformed-clobber / whitespace-trim / empty-sessionId-throws
+- Rendering: alias-in-front, aliased-rows-no-hex-tail, aliased-rows-don't-inflate-collision-count
+
 ## [0.4.6] — 2026-05-23
 
 ### Fixed — Codex sessions rendered as "2026"

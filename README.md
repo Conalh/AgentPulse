@@ -67,6 +67,7 @@ agentpulse live [options]
 | ↑ ↓ / k j / w s | Move selection |
 | r | Force refresh on selected session |
 | **a** | **Whitelist current session's drift findings** (v0.4.1+) |
+| **n** | **Name / rename the selected session** (alias) (v0.4.7+) |
 | ? | Toggle help overlay |
 | q / Ctrl-C | Quit |
 
@@ -80,6 +81,29 @@ agentpulse live [options]
 | ■ blue done | Completion verb + idle gap |
 | ⚠ red drifting | Privileged-path access, network exec, or write outside repo |
 | ○ gray idle | Window had activity earlier OR is silent; agent is parked |
+
+## Agent aliases (v0.4.7+)
+
+When multiple agents work on the same project — say two Claude Code windows + a Cursor + a Codex — the dashboard rows look identical until you name them. Press `n` on a selected row to drop into rename mode, type whatever helps you tell them apart (`CC1`, `CC2`, `frontend`, `backend`), and press Enter. The alias appears in front of the project name (`CC1 · AgentPulse (claude-code)`) and replaces the auto-generated hex disambiguator.
+
+Aliases live in two optional JSON files (cwd wins over home):
+
+- **`<session.cwd>/.agentpulse-aliases.json`** — per-project, commit alongside `.agentpulse-exceptions.json` if you want team-shared conventions.
+- **`~/.agentpulse/aliases.json`** — your personal default, persists across machines if you sync your home dir.
+
+`n`-then-Enter writes to the home file by default; promoting an alias to the shared per-project file is a manual copy/paste — intentional, so a shared file never gets written without you knowing.
+
+Empty + Enter clears the alias.
+
+```json
+{
+  "version": 1,
+  "aliases": {
+    "c3d4566ef4c5": "CC1",
+    "7a8b91234567": "CG1"
+  }
+}
+```
 
 ## Exception baseline (v0.4.1+)
 

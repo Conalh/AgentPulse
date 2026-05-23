@@ -353,6 +353,10 @@ export interface SessionState {
   error?: string;
   /** True while a refresh is in flight for this session. */
   pending: boolean;
+  /** v0.4.7: user-chosen alias (`CC1`, `frontend`, etc.). Loaded from
+   *  `<cwd>/.agentpulse-aliases.json` or `~/.agentpulse/aliases.json` at
+   *  refresh time; `undefined` when the user hasn't named this session. */
+  alias?: string;
 }
 
 export interface OrchestratorOptions {
