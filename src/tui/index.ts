@@ -10,10 +10,13 @@ import React from 'react';
 import { render } from 'ink';
 import { discoverSessions, createSessionWatcher } from '../sessions/index.js';
 import { createOrchestrator } from '../orchestrator.js';
+import { createNotifier } from '../notifications.js';
 import type {
   DiscoveredSession,
   LiveOptions,
+  OrchestratorEvent,
   SessionEvent,
+  TrajectoryBucket,
 } from '../types.js';
 import { App } from './App.js';
 
@@ -39,6 +42,32 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
     refreshIntervalMs,
     detectorsEnabled,
   });
+
+  // v0.4.2: local notifications on state transitions into drifting/stuck.
+  // Default `'none'` — opt-in via --notify. The notifier is a separate
+  // listener on the orchestrator so it never interferes with the TUI's own
+  // render-driven listener. We track previous buckets per session so we can
+  // pass `from` to the trigger policy.
+  const notifier = createNotifier({ mode: opts.notify ?? 'none' });
+  const previousBuckets = new Map<string, TrajectoryBucket | null>();
+  const notifyListener = (event: OrchestratorEvent): void => {
+    if (event.type === 'session-updated') {
+      const sid = event.state.session.id;
+      const next = event.state.recap?.verdict.bucket;
+      if (next) {
+        const prev = previousBuckets.get(sid) ?? null;
+        notifier.onTransition(
+          prev,
+          next,
+          event.state.session.projectName ?? 'session'
+        );
+        previousBuckets.set(sid, next);
+      }
+    } else if (event.type === 'session-removed') {
+      previousBuckets.delete(event.sessionId);
+    }
+  };
+  orchestrator.on(notifyListener);
 
   const watcher = createSessionWatcher({
     discover: { roots: discoveryRoots, staleMs },
@@ -83,6 +112,16 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
       await watcher.stop();
     } catch {
       /* swallow — best-effort shutdown */
+    }
+    try {
+      orchestrator.off(notifyListener);
+    } catch {
+      /* swallow */
+    }
+    try {
+      notifier.stop();
+    } catch {
+      /* swallow */
     }
     try {
       orchestrator.stop();

@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [Unreleased]
+
+### Notifications on state transitions
+
+Walk away from the TUI and still hear it when an agent goes sideways.
+
+### Added
+
+- **`--notify <mode>` on `agentpulse live`** — fires a local notification when any session flips INTO `drifting` or `stuck`. Modes: `none` (default), `bell`, `os`, `both`. Opt-in by design; defaulting to bell would be nag-prone.
+- **Trigger policy** (in `src/notifications.ts`): only fires on transitions INTO an alert bucket from a non-alert state. So `converging → drifting` fires; `drifting → drifting` doesn't (no double-alert); `drifting → idle` doesn't (clearing is silent). `null → drifting` (first pulse already concerning) fires.
+- **`bell`** writes `\x07` to **stderr** (not stdout — stdout is in the alt-screen buffer for the TUI).
+- **`os`** spawns a platform-native notifier, detached + fire-and-forget. macOS uses `osascript`, Linux uses `notify-send` (graceful failure when missing), Windows tries `New-BurntToastNotification` and falls back to a `System.Windows.Forms.NotifyIcon` balloon.
+- **`--once` mode also honors `--notify`** — fires exactly one notification per invocation when any session is gating, regardless of session count. `--once` is a snapshot, not a monitor.
+
+### Windows limitation
+
+The PowerShell `NotifyIcon` fallback works but leaks a tray icon for the duration of the balloon (we `Dispose()` after a 6s sleep, which keeps the spawned PowerShell process alive briefly). Users who want clean Windows toasts can `Install-Module BurntToast` themselves — the spawn tries that first and only falls through to `NotifyIcon` on `Import-Module` failure. For a perfectly clean experience on Windows without BurntToast, prefer `--notify both` so you at least get the terminal bell as the reliable signal.
+
+### Architecture
+
+- New `src/notifications.ts` exports `createNotifier({ mode })`, `shouldNotify(from, to)`, `NotifyMode`. Pure stdlib — no new runtime deps. `child_process.spawn` with `detached: true` and `stdio: 'ignore'` so notification processes never block the orchestrator.
+- TUI wiring (`src/tui/index.ts`): a second orchestrator listener (independent of the App component's render listener) tracks `previousBuckets: Map<sessionId, TrajectoryBucket>` and calls `notifier.onTransition(prev, next, label)` on every `session-updated`. Listener errors are swallowed by the orchestrator's existing try/catch around `emit()`.
+- `LiveOptions.notify?: NotifyMode` threaded through `parseLiveCli`. Invalid values surface as a usage error (exit 2).
+- Notifications are best-effort: every channel swallows its own errors. A missing `notify-send` on Linux or a stripped-down Windows env is a silent no-op, never a crash.
+
+### Tests
+
+134 (was 117). Seventeen new tests in `test/notifications.test.mjs` covering the policy table (null/safe/alert × null/safe/alert), bell-mode stderr capture, both-mode bell-still-rings, `notifyOnce` for `--once` mode, and `stop()` idempotency. The OS channel deliberately isn't asserted on by spawning real `osascript`/`notify-send`/`powershell.exe` — the public `onTransition` return value is the contract, and the spawn calls are detached + error-swallowed so cross-platform CI doesn't ring up the dev's machine.
+
 ## [0.4.1] — 2026-05-23
 
 The interactive whitelist — Cursor's proposal from the inspection round, now real.

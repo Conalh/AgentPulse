@@ -76,6 +76,20 @@ agentpulse live [options]
 | ⚠ red drifting | Privileged-path access, network exec, or write outside repo |
 | ○ gray idle | Window had activity earlier OR is silent; agent is parked |
 
+## GitHub Action (v0.4.2+)
+
+Drop AgentPulse into a pull-request workflow to gate the build on `drifting` / `stuck` sessions:
+
+```yaml
+- uses: Conalh/AgentPulse@v0.4.2
+  with:
+    transcript-dirs: agentpulse-transcripts
+    strict: 'true'
+    comment-on-pr: 'true'
+```
+
+The action runs `agentpulse live --once` against the provided transcript directory, emits a markdown summary to the GitHub step summary, optionally posts a sticky PR comment, and (with `strict: true`) fails the workflow when any session is in `drifting` or `stuck`. Full input / output reference and an example PR-check workflow live in [`action.yml`](./action.yml) and [`examples/agentpulse-pr-check.yml`](./examples/agentpulse-pr-check.yml).
+
 ## `agentpulse recap` — one-shot mode
 
 For piping into scripts, CI, or your own dashboards:

@@ -46,6 +46,11 @@ Live options:
   --format <fmt>            With --once: 'text' (default) or 'json'
   --strict                  Exit 1 if any session is drifting or stuck
                             (CI gating; only honored with --once)
+  --notify <mode>           Local notification on transitions into drifting/
+                            stuck. Modes: none (default), bell, os, both.
+                            'bell' writes \\x07 to stderr; 'os' fires a
+                            native notification (osascript / notify-send /
+                            PowerShell on macOS / Linux / Windows).
 
   -h, --help                Show this help`;
 
@@ -306,6 +311,8 @@ function parseLiveCli(
         once: { type: 'boolean', default: false },
         format: { type: 'string' },
         strict: { type: 'boolean', default: false },
+        // v0.4.2: local notification mode for transitions into drifting/stuck.
+        notify: { type: 'string' },
       },
     });
   } catch (err) {
@@ -358,6 +365,24 @@ function parseLiveCli(
     };
   }
 
+  // v0.4.2: validate --notify mode. Default `'none'` — notifications are
+  // opt-in because they're nag-prone; defaulting to bell would surprise users.
+  const notifyStr = (v.notify as string | undefined) ?? 'none';
+  if (
+    notifyStr !== 'none' &&
+    notifyStr !== 'bell' &&
+    notifyStr !== 'os' &&
+    notifyStr !== 'both'
+  ) {
+    return {
+      ok: false,
+      error: {
+        message: `Invalid --notify: ${notifyStr} (expected 'none', 'bell', 'os', or 'both')`,
+        code: 2,
+      },
+    };
+  }
+
   return {
     ok: true,
     opts: {
@@ -372,6 +397,7 @@ function parseLiveCli(
       once: Boolean(v.once),
       format: formatStr as 'text' | 'json',
       strict: Boolean(v.strict),
+      notify: notifyStr as import('./notifications.js').NotifyMode,
     },
   };
 }
