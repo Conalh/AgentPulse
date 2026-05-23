@@ -30,10 +30,15 @@
   "engines": {
     "node": ">=20"
   },
+  "author": "Conal (RAGE)",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Conalh/AgentPulse.git"
+  },
+  "homepage": "https://github.com/Conalh/AgentPulse#readme",
+  "bugs": {
+    "url": "https://github.com/Conalh/AgentPulse/issues"
   },
   "keywords": [
     "ai",
@@ -43,7 +48,15 @@
     "codex",
     "observability",
     "governance",
-    "transcript"
+    "transcript",
+    "tui",
+    "terminal",
+    "dashboard",
+    "ink",
+    "no-llm",
+    "agent-monitoring",
+    "ci-gate",
+    "agent-gov"
   ],
   "dependencies": {
     "agent-gov-core": "^1.0.0",
