@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.3.0] — 2026-05-23
+
+### Added
+
+- **Startup splash.** ~900 ms ANSI-Shadow ASCII rendering of `RAGE` in bold red, with `AgentPulse` and the tagline `live trajectory verdict · local · no LLM` underneath in cyan + dim. Mounts before the dashboard, fades into it as soon as the timer fires.
+- **Header signature.** Title bar now reads `AgentPulse · by RAGE` (RAGE in bold red) — a small attribution in the chrome that's visible at all times without distracting from the data.
+- **Footer signature.** Lower bar now ends with a small `▲RAGE` mark on the right side, matching the bucket-pill family.
+
+### Why bump to 0.3.0
+
+Pure additive visual change, no contract or behavior change to any layer. Bumping minor (not patch) because the dashboard's visual identity is now branded — that's a notable enough change in look-and-feel to warrant a minor version under the project's semver model.
+
 ## [0.2.11] — 2026-05-23
 
 ### Fixed

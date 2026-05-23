@@ -18,6 +18,7 @@ import type {
 import { SessionList } from './SessionList.js';
 import { SessionDetail } from './SessionDetail.js';
 import { formatDelta } from './duration.js';
+import { Splash } from './Splash.js';
 
 export interface AppProps {
   orchestrator: PulseOrchestrator;
@@ -72,6 +73,14 @@ export function App({
   const [showHelp, setShowHelp] = useState<boolean>(false);
   // v0.2.9: debounce timestamp for the help-overlay toggle. See `?` handler.
   const lastHelpToggleRef = useRef<number>(0);
+  // v0.3.0: brief startup splash. Flips to false after 900ms so the
+  // dashboard renders in-place over the splash (alt-screen handles the
+  // clear).
+  const [showSplash, setShowSplash] = useState<boolean>(true);
+  useEffect(() => {
+    const id = setTimeout(() => setShowSplash(false), 900);
+    return () => clearTimeout(id);
+  }, []);
 
   // Filter + cap. Filtering by "active in window" is purely a render concern —
   // the orchestrator still tracks every session, so an idle one becoming
@@ -228,10 +237,22 @@ export function App({
       : `${visibleStates.length}/${states.length} sessions`;
   const headerRight = `${totalLabel}, refresh ${formatDelta(refreshIntervalMs)}`;
 
+  // v0.3.0: splash for the first ~900ms. Returns before any of the dashboard
+  // chrome so the splash is centered in the alt-screen frame.
+  if (showSplash) {
+    return <Splash />;
+  }
+
   return (
     <Box flexDirection="column">
       <Box borderStyle="round" borderColor="cyan" paddingX={1} justifyContent="space-between">
-        <Text bold>AgentPulse</Text>
+        <Box>
+          <Text bold>AgentPulse</Text>
+          <Text dimColor> · by </Text>
+          <Text bold color="red">
+            RAGE
+          </Text>
+        </Box>
         <Text dimColor>{headerRight}</Text>
       </Box>
 
@@ -256,8 +277,11 @@ export function App({
         </Box>
       )}
 
-      <Box paddingX={1}>
+      <Box paddingX={1} justifyContent="space-between">
         <Text dimColor>↑↓ / WS select · r refresh · ? help · q quit</Text>
+        <Text dimColor>
+          ▲<Text color="red" bold>RAGE</Text>
+        </Text>
       </Box>
     </Box>
   );
