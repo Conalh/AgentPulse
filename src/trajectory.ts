@@ -605,10 +605,13 @@ export function classifyTrajectory(
     const target = firstEditedFile(enriched);
     const signals: string[] = [];
     if (refuseToVerifyStuck) {
+      // v0.4.3: don't spread sequence.details here — the refuse_to_verify
+      // sequence's only detail is "${edits} edits with no verification
+      // events in the window", which restates the line we just pushed. Two
+      // bullets saying the same thing read as a stutter in the TUI.
       signals.push(
         `${editing} edits with no verification — agent isn't running anything`
       );
-      signals.push(...sequence!.details);
     } else {
       signals.push(`${editing} edits${target ? ` (top file: ${target})` : ''}`);
       signals.push(

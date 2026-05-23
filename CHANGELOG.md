@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.4.3] — 2026-05-23
+
+Three narrative-quality fixes — all driven by a dogfooded dashboard screenshot the user was about to use as the README hero image. Sometimes the bug only shows up when you're staring at the tool in production.
+
+### Fixed — "working on bad for 20 minutes"
+
+The narrative reads its topic word from `enriched.topics[0]`, which is the most-frequent non-stopword token in user messages. In a real noisy session, evaluative adjectives like `bad` / `good` / `looks` and conversational fillers like `thing` / `hmm` / `yeah` outranked the actual subject of work, producing broken-English narratives like "Your agent has been working on bad for 20 minutes."
+
+- **`STOPWORDS` in `src/enrich.ts`** expanded with ~50 entries covering evaluative adjectives (`bad`, `good`, `great`, `weird`, `broken`, …), weak verbs (`looks`, `seems`, `want`, `need`, `try`, `said`, `think`, …), vague nouns (`thing`, `stuff`, `way`, `kind`, …), and conversational fillers (`hmm`, `yeah`, `nope`, `lol`, …). Still well under the 500-token guard the existing test asserts.
+- **Regression test** in `test/enrich.test.mjs` lists 13 of these words and asserts none survive to `topics[]`; also asserts a real subject word (`authentication` / `login`) still wins.
+
+### Fixed — duplicate "no verification" signal bullet
+
+When the `refuse_to_verify` sequence pattern + ≥5 edits flipped a session to `stuck`, the TUI showed two bullets that said the same thing:
+
+```
+· 10 edits with no verification — agent isn't running anything
+· 10 edits with no verification events in the window
+```
+
+The first came from the trajectory layer (`src/trajectory.ts`), the second from spreading `sequence.details` (whose only detail for this pattern was the same fact restated). Dropped the spread; one signal now.
+
+- **`src/trajectory.ts`** — removed `signals.push(...sequence!.details)` in the `refuseToVerifyStuck` branch.
+- **Regression test** in `test/sequences.test.mjs` asserts `verdict.signals.filter(/no verification/).length === 1`.
+
+### Fixed — narrative stutter on stuck + refuse_to_verify
+
+The stuck narrative ends "…but without running tests to verify. The conversation has a 'try again' tone. Worth checking in." — and then v0.3.2's sequence-phrase appendage tacked on "It's been editing without running anything to verify — worth checking." Two near-identical "verify" + "worth checking" tails back to back.
+
+- **`src/narrative.ts`** — added a `stuckRefuseStutter` skip-clause to the sequence-phrase appendage. The stuck bucket already covers the refuse_to_verify content; the sequence phrase is suppressed in that one combination. Other bucket × sequence combinations still append as before.
+- **Regression test** in `test/narrative.test.mjs` constructs a stuck + refuse_to_verify verdict and asserts the narrative says "worth checking" exactly once.
+
+### Tests
+
+136 (was 134). Two new tests; one tightened assertion in `sequences.test.mjs`.
+
 ## [0.4.2] — 2026-05-23
 
 Two features ship together: the GitHub Action variant (CI integration on rails) and local notifications (walk away from the TUI and still hear when something flips).

@@ -342,11 +342,22 @@ export function renderRecap(
   // appending to `drifting` (the warning lede already dominates that
   // narrative) and to `idle` (the sequence is about *active* shape and
   // the agent isn't currently active).
+  //
+  // v0.4.3: also skip stuck + refuse_to_verify. The stuck narrative already
+  // ends with "...without running tests to verify. ... Worth checking in."
+  // and the refuse_to_verify sequence phrase says "It's been editing
+  // without running anything to verify — worth checking." Appending one
+  // onto the other reads as a stutter (the user saw exactly this in the
+  // wild — see the dashboard screenshot review).
   const seqPhrase = sequencePhrase(verdict);
+  const stuckRefuseStutter =
+    verdict.bucket === 'stuck' &&
+    verdict.sequence?.pattern === 'refuse_to_verify';
   if (
     seqPhrase &&
     verdict.bucket !== 'drifting' &&
-    verdict.bucket !== 'idle'
+    verdict.bucket !== 'idle' &&
+    !stuckRefuseStutter
   ) {
     body = body + ' ' + seqPhrase;
   }

@@ -264,6 +264,20 @@ test('classifyTrajectory: refuse_to_verify + editing≥5 flips to stuck', () => 
   assert.equal(verdict.bucket, 'stuck');
   assert.equal(verdict.sequence?.pattern, 'refuse_to_verify');
   assert.ok(verdict.signals.some((s) => /no verification/i.test(s)));
+
+  // v0.4.3: only ONE signal should mention "no verification". Pre-fix the
+  // trajectory layer pushed its own message AND spread sequence.details,
+  // producing two near-identical bullets in the TUI:
+  //   "5 edits with no verification — agent isn't running anything"
+  //   "5 edits with no verification events in the window"
+  const noVerificationSignals = verdict.signals.filter((s) =>
+    /no verification/i.test(s)
+  );
+  assert.equal(
+    noVerificationSignals.length,
+    1,
+    'exactly one signal should mention "no verification" (no duplicates)'
+  );
 });
 
 test('classifyTrajectory: tdd_loop (≥3 cycles) bumps converging to 0.9', () => {

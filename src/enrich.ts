@@ -44,6 +44,26 @@ const STOPWORDS: ReadonlySet<string> = new Set([
   'pls', 'please', 'thanks', 'thank',
   'lets', "let's", 'let',
   's', 't', 'd', 'll', 're', 've', 'm',
+  // v0.4.3: evaluative adjectives and conversational fillers. Without this
+  // expansion, a noisy real session can surface "bad" / "good" / "looks" /
+  // "thing" as the agent's *topic* — the narrative then reads
+  // "working on bad for 20 minutes" which is broken English. None of these
+  // words are real subjects of work, just sentiment / filler.
+  'bad', 'good', 'great', 'fine', 'nice', 'cool', 'awesome', 'weird',
+  'broken', 'wrong', 'right', 'sure', 'better', 'best', 'worse', 'worst',
+  'big', 'small', 'long', 'short', 'hard', 'easy',
+  'looks', 'look', 'looking', 'looked',
+  'seems', 'seemed', 'seem', 'seeming',
+  'want', 'wants', 'wanted', 'wanting',
+  'need', 'needs', 'needed', 'needing',
+  'try', 'tries', 'tried', 'trying',
+  'said', 'says', 'say', 'saying',
+  'think', 'thinks', 'thought', 'thinking',
+  'guess', 'guesses', 'guessed', 'guessing',
+  'maybe', 'probably', 'definitely', 'always', 'never', 'often',
+  'thing', 'things', 'stuff', 'way', 'ways', 'kind', 'kinds', 'sort', 'sorts',
+  'hmm', 'hm', 'yeah', 'yep', 'nope', 'lol', 'haha', 'hey', 'hi', 'hello',
+  'oh', 'ah', 'wow', 'sorry', 'huh',
 ]);
 
 // Exported for tests / introspection.

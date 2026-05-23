@@ -129,6 +129,55 @@ test("stuck: narrative includes 'try again' tone and 'checking in'", () => {
   assert.match(recap.narrative, /tests aren't passing/);
 });
 
+test('stuck + refuse_to_verify: narrative does NOT repeat the "no verify" phrase (v0.4.3)', () => {
+  // Pre-fix the narrative read:
+  //   "...but without running tests to verify. The conversation has a
+  //    'try again' tone. Worth checking in. It's been editing without
+  //    running anything to verify — worth checking."
+  // Two near-identical "verify" + "worth checking" tails back-to-back.
+  // The stuck bucket narrative already covers the refuse_to_verify signal;
+  // the sequence phrase should be suppressed.
+  const enriched = enrichedFixture({
+    actionCounts: {
+      exploration: 1,
+      editing: 10,
+      verification: 0,
+      external: 0,
+      navigation: 0,
+      other: 0,
+    },
+    primaryFiles: ['README.md'],
+  });
+  const outcome = outcomeFixture({
+    verificationTrend: 'no_data',
+    userToneTrend: 'correcting',
+  });
+  const verdict = verdictFixture({
+    bucket: 'stuck',
+    confidence: 0.75,
+    sequence: {
+      pattern: 'refuse_to_verify',
+      confidence: 0.7,
+      details: ['10 edits with no verification events in the window'],
+    },
+  });
+  const recap = renderRecap(enriched, outcome, verdict);
+
+  // Stuck-bucket content is still present.
+  assert.match(recap.narrative, /without running tests to verify/);
+  assert.match(recap.narrative, /checking in/i);
+
+  // The sequence phrase must NOT have been appended.
+  assert.doesNotMatch(
+    recap.narrative,
+    /without running anything to verify/,
+    'narrative should not include the refuse_to_verify sequence phrase on top of the stuck body',
+  );
+  // "worth checking" (or "worth checking in") should appear at most once.
+  const matches = recap.narrative.match(/worth checking/gi) ?? [];
+  assert.equal(matches.length, 1, 'narrative should say "worth checking" only once');
+});
+
 test('done: narrative says "finished" and "signed off"', () => {
   const outcome = outcomeFixture({
     verificationTrend: 'flat_pass',

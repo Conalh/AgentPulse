@@ -230,6 +230,30 @@ test('empty window: returns sensible zero/empty values without throwing', () => 
 
 // ── Bonus coverage ──────────────────────────────────────────────────
 
+test('topic extraction: drops evaluative adjectives and conversational fillers (v0.4.3)', () => {
+  // Regression: real-world dogfooding produced "working on bad for 20
+  // minutes" because the user said things like "bad picture" and "bad"
+  // out-counted the actual topic words. None of these words should ever
+  // win the topics ranking.
+  const events = [
+    userMsg(1_000, 'this is bad bad bad, the picture is bad'),
+    userMsg(2_000, 'looks weird, kinda nice though, hmm yeah'),
+    userMsg(3_000, "i think things look broken — try again maybe"),
+    userMsg(4_000, 'authentication broken on login'),
+  ];
+  const e = enrichWindow(events, WSTART, WEND);
+
+  for (const w of ['bad', 'good', 'looks', 'thing', 'things', 'try', 'hmm',
+                   'yeah', 'maybe', 'think', 'broken', 'weird', 'nice']) {
+    assert.ok(!e.topics.includes(w), `topics must NOT include filler "${w}"`);
+  }
+  // The actual subject word should survive.
+  assert.ok(
+    e.topics.includes('authentication') || e.topics.includes('login'),
+    'real topic word should survive the filter',
+  );
+});
+
 test('events outside the window are dropped', () => {
   const events = [
     userMsg(-1000, 'before the window'),
