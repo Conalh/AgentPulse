@@ -112,7 +112,7 @@ CI-ready release. AgentPulse can now run headless, emit structured JSON, and gat
 - **`--strict`** (for `--once` mode) — exits `1` when any session is in `drifting` or `stuck`. Drop into a GitHub Action's pre-merge check to gate on agent state without writing your own JSON parser.
 
   ```yaml
-  - run: npx agentpulse@latest live --once --strict
+  - run: npx @conalh/agentpulse@latest live --once --strict
   ```
 
 ### Architecture
