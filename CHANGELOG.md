@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.0] — 2026-05-23
+
+**Live multi-session TUI** — new `agentpulse live` subcommand that auto-discovers active agent sessions, runs the AgentPulse pipeline per session on a rolling refresh, and renders a two-pane Ink TUI with color-coded verdict pills and live updates.
+
+### Added
+
+- `agentpulse live` subcommand. Discovers transcripts in `~/.claude/projects/`, `~/.cursor/projects/`, `~/.codex/sessions/` by default; override via `--roots <p1,p2,...>`. Filters out sessions older than `--stale` (default 24h).
+- Multi-session orchestrator (`createOrchestrator`) — per-session refresh timers, concurrent-refresh coalescing via in-flight promise tracking, error capture per session so one bad transcript doesn't take down the dashboard.
+- Filesystem watcher (`createSessionWatcher`) — recursive `fs.watch` with polling fallback on platforms that don't support it; 300ms per-file debounce; stat-only probes (no whole-file rereads).
+- Ink-based TUI — left pane lists sessions with color-coded verdict pills (●converging / ◐exploring / ▲stuck / ■done / ⚠drifting); right pane shows narrative + signals + drift summary for the selected session. Keyboard: ↑↓/jk to navigate, `r` to force refresh, `?` for help, `q`/Ctrl-C to exit.
+- TUI deps (`ink`, `react`) added but lazy-loaded — the existing `agentpulse recap` path imports zero TUI code and stays lean.
+
+### Changed
+
+- `tsconfig.json` — added `jsx: react-jsx` to support TUI `.tsx` files.
+- CLI — `agentpulse --help` now lists both `recap` and `live` subcommands.
+
+### Architecture
+
+Three parallel workstreams developed concurrently against locked `src/types.ts` contracts:
+
+- **Workstream A** (`src/sessions/`) — `discoverSessions` + `createSessionWatcher`. Pure Node stdlib.
+- **Workstream B** (`src/orchestrator.ts`) — `createOrchestrator` — multi-session state map + per-session refresh loop.
+- **Workstream C** (`src/tui/`) — `runLiveTui` + Ink components. New deps only here.
+
+This time the parallel agents ran in isolated git worktrees (lesson from v0.1) — zero checkout contention, clean PRs, fast-forward merges.
+
+### Test count
+
+78 tests passing (53 from v0.1 + 25 new across the three workstreams).
+
 ## [0.1.0] — 2026-05-23
 
 Initial release. Live trajectory verdict for AI coding agent sessions. Local-only, deterministic, no LLM, no outbound network calls.
