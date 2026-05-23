@@ -82,10 +82,10 @@ test('CLI: unknown flag -> exit 2 with parse error', () => {
 });
 
 // Smoke-test that arg parsing succeeds for a valid command. Until layers
-// 1-4 are implemented, calling pulse() throws "not yet implemented" — so
-// we assert exit code is NOT 2 (arg parsing succeeded) and stderr has the
-// runtime error prefix.
-test('CLI: valid args reach pulse() (exit code !== 2, runtime error surfaced)', () => {
+// Empty transcript directory is valid input — the pipeline returns a
+// no-data "exploring" verdict and exits 0. We assert the JSON shape is
+// well-formed and the verdict bucket lands sensibly.
+test('CLI: valid args run the full pipeline against an empty transcript dir', () => {
   const tmp = mkdtempSync(resolve(tmpdir(), 'agentpulse-cli-'));
   try {
     const r = runCli([
@@ -96,8 +96,16 @@ test('CLI: valid args reach pulse() (exit code !== 2, runtime error surfaced)', 
       'json',
       '--no-detectors',
     ]);
-    assert.notEqual(r.status, 2);
-    assert.match(r.stderr, /agentpulse:/);
+    assert.equal(r.status, 0, `expected exit 0, got ${r.status}; stderr: ${r.stderr}`);
+    const recap = JSON.parse(r.stdout);
+    assert.ok(recap.verdict, 'recap.verdict missing');
+    assert.ok(
+      ['exploring', 'done', 'converging', 'stuck', 'drifting'].includes(recap.verdict.bucket),
+      `unexpected bucket: ${recap.verdict.bucket}`
+    );
+    assert.equal(typeof recap.narrative, 'string');
+    assert.ok(recap.narrative.length > 0, 'recap.narrative empty');
+    assert.equal(recap.enriched.events.length, 0, 'expected zero events for empty dir');
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
