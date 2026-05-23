@@ -190,3 +190,157 @@ export interface TrajectoryOptions {
    *  events to populate `drifts[]` and (potentially) flip bucket → 'drifting'. */
   detectorsEnabled?: boolean;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// v0.2 — Live multi-session contracts
+//
+// These types are the synthesis surface for the `agentpulse live` TUI.
+// Three workstreams build against them in parallel:
+//
+//   Workstream A → src/sessions/   (discoverSessions + createSessionWatcher)
+//   Workstream B → src/orchestrator.ts (PulseOrchestrator class)
+//   Workstream C → src/tui/        (Ink TUI consuming the orchestrator)
+//
+// Keep this contract stable. Drift here breaks parallel work.
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * A transcript file we found on disk that looks like an active or recent
+ * agent session.
+ */
+export interface DiscoveredSession {
+  /** Stable id derived from the transcript file path (e.g. SHA-1 short hash). */
+  id: string;
+  runtime: Runtime;
+  /** Absolute path to the `.jsonl` file. */
+  transcriptPath: string;
+  /** Best-effort human label inferred from path parts.
+   *  e.g. `~/.claude/projects/c-Dev-MyApp/...` → `MyApp`. */
+  projectName?: string;
+  /** Epoch ms of the file's last modification time. */
+  lastModified: number;
+  /** Working directory if the runtime supplied one in the transcript. */
+  cwd?: string;
+}
+
+/**
+ * Session-discovery options. All fields optional; sensible defaults.
+ */
+export interface DiscoverOptions {
+  /** Override the discovery roots. Default: platform-aware home-relative
+   *  paths for Claude Code, Cursor, and Codex. Pass an explicit list to
+   *  pin to specific directories. */
+  roots?: string[];
+  /** Skip sessions whose lastModified is older than this many ms ago.
+   *  Default: 24 hours. Use Infinity to disable. */
+  staleMs?: number;
+}
+
+/**
+ * Watcher event payload. Emitted on session add / change / remove.
+ */
+export type SessionEvent =
+  | { type: 'add'; session: DiscoveredSession }
+  | { type: 'change'; session: DiscoveredSession }
+  | { type: 'remove'; sessionId: string };
+
+/**
+ * SessionWatcher interface — duck-typed so the implementation can use either
+ * a real EventEmitter or a lightweight equivalent without forcing the
+ * dependency on TUI consumers that only need .on/.off.
+ */
+export interface SessionWatcher {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  /** Listen for session add/change/remove events. */
+  on(listener: (event: SessionEvent) => void): void;
+  off(listener: (event: SessionEvent) => void): void;
+  /** Get the currently-known sessions without waiting for the next tick. */
+  snapshot(): DiscoveredSession[];
+}
+
+export interface WatcherOptions {
+  /** Initial discovery options. */
+  discover?: DiscoverOptions;
+  /** Debounce window (ms) for coalescing rapid file changes. Default: 300. */
+  debounceMs?: number;
+  /** Polling interval (ms) when the platform doesn't support fs.watch on the
+   *  target path. Default: 1000. */
+  pollIntervalMs?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Orchestrator (Workstream B)
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The orchestrator-tracked state for a single session.
+ */
+export interface SessionState {
+  session: DiscoveredSession;
+  /** Latest computed recap. `null` until the first pulse() completes. */
+  recap: PulseRecap | null;
+  /** Epoch ms of the last successful refresh. */
+  lastUpdated: number;
+  /** When the last pulse() threw, this carries the message. Cleared on
+   *  the next successful refresh. */
+  error?: string;
+  /** True while a refresh is in flight for this session. */
+  pending: boolean;
+}
+
+export interface OrchestratorOptions {
+  /** AgentPulse window passed through to pulse(). Default: 20 min. */
+  windowMs?: number;
+  /** Drift detectors enabled? Default: true. */
+  detectorsEnabled?: boolean;
+  /** Background refresh cadence per session, in ms. Default: 30_000.
+   *  File-change events from the watcher cause immediate refreshes
+   *  independent of this cadence. */
+  refreshIntervalMs?: number;
+}
+
+/**
+ * Orchestrator update event — emitted whenever a SessionState changes
+ * (added, recap refreshed, error, removed).
+ */
+export type OrchestratorEvent =
+  | { type: 'session-added'; state: SessionState }
+  | { type: 'session-updated'; state: SessionState }
+  | { type: 'session-removed'; sessionId: string };
+
+/**
+ * Multi-session pulse orchestrator. Owns the in-memory state map and the
+ * per-session refresh loop. The TUI subscribes to its events for redraws.
+ */
+export interface PulseOrchestrator {
+  add(session: DiscoveredSession): void;
+  remove(sessionId: string): void;
+  /** Force an immediate refresh on a session (used by the watcher when
+   *  the file changes). */
+  refresh(sessionId: string): Promise<void>;
+  /** Snapshot of all current session states. */
+  states(): SessionState[];
+  /** Subscribe to state changes. */
+  on(listener: (event: OrchestratorEvent) => void): void;
+  off(listener: (event: OrchestratorEvent) => void): void;
+  /** Stop background refresh timers. Idempotent. */
+  stop(): void;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TUI (Workstream C)
+// ─────────────────────────────────────────────────────────────────────
+
+export interface LiveOptions {
+  /** Window for each session's recap. Default: 20 min. */
+  windowMs?: number;
+  /** Background refresh cadence. Default: 30s. */
+  refreshIntervalMs?: number;
+  /** Drift detectors. Default: true. */
+  detectorsEnabled?: boolean;
+  /** Override discovery roots. */
+  discoveryRoots?: string[];
+  /** Skip sessions older than this. Default: 24h. */
+  staleMs?: number;
+}

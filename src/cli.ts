@@ -19,8 +19,11 @@ import { resolve } from 'node:path';
 import { pulse } from './index.js';
 import type { PulseRecap } from './types.js';
 
-const USAGE = `Usage: agentpulse recap --transcript-dir <path> [options]
+const USAGE = `Usage:
+  agentpulse recap --transcript-dir <path> [options]   one-shot recap
+  agentpulse live [options]                            live multi-session TUI
 
+Recap options:
   --transcript-dir <path>   Directory of transcript JSONL files (required)
   --window <duration>       e.g. 20m, 1h, 30s. Default: 20m
   --watch                   Re-emit periodically until SIGINT
@@ -29,6 +32,14 @@ const USAGE = `Usage: agentpulse recap --transcript-dir <path> [options]
   --no-detectors            Skip drift detection
   --format <fmt>            'text' (default) or 'json'
   --output <path>           Write to file instead of stdout
+
+Live options:
+  --window <duration>       Recap window per session. Default: 20m
+  --refresh <duration>      Background refresh cadence. Default: 30s
+  --no-detectors            Skip drift detection
+  --roots <p1,p2,...>       Override discovery roots (comma-separated)
+  --stale <duration>        Skip sessions older than this. Default: 24h
+
   -h, --help                Show this help`;
 
 /**
@@ -108,6 +119,7 @@ export function parseCli(
     return { ok: false, error: { message: USAGE, code: 0 } };
   }
   if (argv[0] !== 'recap') {
+    // 'live' is handled by main() before reaching parseCli, so anything else here is a usage error.
     return {
       ok: false,
       error: { message: `Unknown subcommand: ${argv[0]}\n\n${USAGE}`, code: 2 },
@@ -250,8 +262,92 @@ function sleep(ms: number, shouldStop: () => boolean): Promise<void> {
   });
 }
 
+/**
+ * Parse `agentpulse live` flags. Returns the resolved LiveOptions or a
+ * ParseFailure. Kept separate from parseCli() so the recap and live
+ * subcommands can diverge without contaminating each other.
+ */
+function parseLiveCli(
+  argv: string[]
+): { ok: true; opts: import('./types.js').LiveOptions } | { ok: false; error: ParseFailure } {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: argv,
+      strict: true,
+      allowPositionals: false,
+      options: {
+        window: { type: 'string' },
+        refresh: { type: 'string' },
+        'no-detectors': { type: 'boolean', default: false },
+        roots: { type: 'string' },
+        stale: { type: 'string' },
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: { message: `${msg}\n\n${USAGE}`, code: 2 } };
+  }
+  const v = parsed.values;
+
+  const windowStr = (v.window as string | undefined) ?? '20m';
+  const windowMs = parseDuration(windowStr);
+  if (windowMs === null) {
+    return { ok: false, error: { message: `Invalid --window duration: ${windowStr}`, code: 2 } };
+  }
+
+  const refreshStr = (v.refresh as string | undefined) ?? '30s';
+  const refreshIntervalMs = parseDuration(refreshStr);
+  if (refreshIntervalMs === null) {
+    return { ok: false, error: { message: `Invalid --refresh duration: ${refreshStr}`, code: 2 } };
+  }
+
+  const staleStr = (v.stale as string | undefined) ?? '24h';
+  const staleMs = parseDuration(staleStr);
+  if (staleMs === null) {
+    return { ok: false, error: { message: `Invalid --stale duration: ${staleStr}`, code: 2 } };
+  }
+
+  const rootsStr = v.roots as string | undefined;
+  const discoveryRoots = rootsStr
+    ? rootsStr.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+    : undefined;
+
+  return {
+    ok: true,
+    opts: {
+      windowMs,
+      refreshIntervalMs,
+      detectorsEnabled: !v['no-detectors'],
+      discoveryRoots,
+      staleMs,
+    },
+  };
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+
+  // Handle global help before subcommand dispatch.
+  if (argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(USAGE + '\n');
+    process.exit(0);
+  }
+
+  // 'live' subcommand — lazy-load the TUI module so its deps don't get
+  // pulled in for plain `agentpulse recap` invocations.
+  if (argv[0] === 'live') {
+    const parsed = parseLiveCli(argv.slice(1));
+    if (!parsed.ok) {
+      process.stderr.write(parsed.error.message + '\n');
+      process.exit(parsed.error.code);
+    }
+    const { runLiveTui } = await import('./tui/index.js');
+    await runLiveTui(parsed.opts);
+    return;
+  }
+
+  // Default: 'recap' subcommand.
   const parsed = parseCli(argv);
   if (!parsed.ok) {
     const stream = parsed.error.code === 0 ? process.stdout : process.stderr;
