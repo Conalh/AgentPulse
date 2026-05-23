@@ -13,8 +13,9 @@
     "sourceMap": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-jsx"
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "src/**/*.tsx"],
   "exclude": ["node_modules", "dist", "test"]
 }
