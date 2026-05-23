@@ -39,7 +39,7 @@ Live options:
   --no-detectors            Skip drift detection
   --roots <p1,p2,...>       Override discovery roots (comma-separated)
   --stale <duration>        Skip sessions older than this. Default: 1h
-  --show-idle               Include sessions with zero activity in the window
+  --hide-idle               Hide sessions with zero activity in the window
   --max-sessions <N>        Cap the displayed list. Default: 10
 
   -h, --help                Show this help`;
@@ -284,7 +284,7 @@ function parseLiveCli(
         'no-detectors': { type: 'boolean', default: false },
         roots: { type: 'string' },
         stale: { type: 'string' },
-        'show-idle': { type: 'boolean', default: false },
+        'hide-idle': { type: 'boolean', default: false },
         'max-sessions': { type: 'string' },
       },
     });
@@ -338,7 +338,7 @@ function parseLiveCli(
       detectorsEnabled: !v['no-detectors'],
       discoveryRoots,
       staleMs,
-      showIdle: Boolean(v['show-idle']),
+      hideIdle: Boolean(v['hide-idle']),
       maxSessions,
     },
   };

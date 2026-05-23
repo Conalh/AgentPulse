@@ -456,6 +456,31 @@ export function classifyTrajectory(
     return makeVerdict('converging', 0.85, signals.slice(0, 4), []);
   }
 
+  // 4b. Converging (no verification signal) — v0.2.2 patch.
+  //
+  // The original converging rule required `verificationTrend === 'improving'`,
+  // which means heavy editing without test data (or in repos with no test
+  // command at all) would fall all the way through to the 0.3-confidence
+  // exploring fallback. That misclassified obviously-productive sessions —
+  // 40 edits across one cluster is not "exploring", it's converging without
+  // a verification proxy.
+  //
+  // Heuristic: a "productive editing session" is editing >= 5 with either
+  // a narrowed cluster (top >= 50%) OR a clear primary file. Confidence is
+  // medium (0.6) because we can't see the outcome, only the activity shape.
+  if (editing >= 5 && (cluster.share >= 0.5 || enriched.primaryFiles.length >= 1)) {
+    const pct = Math.round(cluster.share * 100);
+    const signals: string[] = [`${editing} edits in window`];
+    if (cluster.top && cluster.share >= 0.5) {
+      signals.push(`top cluster ${cluster.top} covers ${pct}% of activity`);
+    }
+    if (enriched.primaryFiles.length > 0) {
+      signals.push(`primary file: ${enriched.primaryFiles[0]}`);
+    }
+    signals.push('no verification data — confidence reflects that');
+    return makeVerdict('converging', 0.6, signals.slice(0, 4), []);
+  }
+
   // 5. Exploring — no edits, lots of reads/searches.
   if (editing === 0 && exploration >= 3) {
     const signals: string[] = [

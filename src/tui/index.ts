@@ -24,7 +24,7 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
   // v0.2.1: 1h default (was 24h). 24h surfaced too many idle transcripts.
   const staleMs = opts.staleMs ?? 1 * 3_600_000;
   const discoveryRoots = opts.discoveryRoots;
-  const showIdle = opts.showIdle ?? false;
+  const hideIdle = opts.hideIdle ?? false;
   const maxSessions = opts.maxSessions ?? 10;
 
   // Discovery is a one-shot probe; the watcher takes over for live updates.
@@ -110,7 +110,7 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
       watcher,
       refreshIntervalMs,
       onExit,
-      showIdle,
+      hideIdle,
       maxSessions,
     })
   );

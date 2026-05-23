@@ -24,8 +24,9 @@ export interface AppProps {
   watcher: SessionWatcher;
   refreshIntervalMs: number;
   onExit: () => void;
-  /** Include sessions with zero tool invocations in the window. Default false. */
-  showIdle?: boolean;
+  /** Hide sessions with zero tool invocations in the window. Default false
+   *  (idle sessions stay visible, dimmed via low confidence). */
+  hideIdle?: boolean;
   /** Cap the displayed list. 0 disables the cap. Default unbounded when
    *  omitted (the CLI passes 10 by default). */
   maxSessions?: number;
@@ -43,7 +44,7 @@ export function App({
   watcher,
   refreshIntervalMs,
   onExit,
-  showIdle = false,
+  hideIdle = false,
   maxSessions = 0,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
@@ -60,7 +61,7 @@ export function App({
   // startup.
   const visibleStates = useMemo(() => {
     let v = states;
-    if (!showIdle) {
+    if (hideIdle) {
       v = v.filter((s) => {
         if (s.recap === null) return true; // first pulse pending — keep visible
         return s.recap.enriched.toolInvocationCount > 0;
@@ -70,7 +71,7 @@ export function App({
       v = v.slice(0, maxSessions);
     }
     return v;
-  }, [states, showIdle, maxSessions]);
+  }, [states, hideIdle, maxSessions]);
 
   const [selectedId, setSelectedId] = useState<string | null>(() => {
     const initial = orchestrator.states();

@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.2] — 2026-05-23
+
+Second dogfooding patch. v0.2.1 fixed most of the "56 sessions of `C`" problem but introduced two new ones surfaced on the next real-world run: some sessions still showed up as `C--` (the `<letter>--` strip left the slug empty and the function fell back to the raw slug), heavily-editing sessions were misclassified as low-confidence exploring (the converging rule required verification data we didn't have), and the idle filter was hiding genuinely-active-this-hour Cursor / Codex sessions.
+
+### Fixed
+
+- **Slug decoder when the `<letter>--` strip leaves nothing.** Pre-fix, a slug of literally `C--` would strip to `''`, split to `[]`, and fall back to returning the original `C--`. Now returns an empty string in that case and `deriveProjectName` falls back to `cwd` basename, or — when even that doesn't help — to the prefix-stripped slug, so the dashboard never shows a raw `C--` cell.
+
+- **Heavy editing without verification data no longer falls through to low-confidence exploring.** New `converging (no verification)` rule fires when `editing >= 5` AND (a cluster covers >= 50% OR a primary file is identified). Confidence 0.6 to reflect the missing test signal. A session in the middle of "Phase 7 — wire the text area into the dashboard" with 40 edits now reads as `converging` instead of `exploring (defaulting)`.
+
+### Changed (defaults)
+
+- **Idle filter inverted.** v0.2.1 hid sessions with zero tool invocations in the 20-min window by default; v0.2.2 shows them. The hide-by-default behavior was too aggressive — it disappeared Cursor and Codex sessions whenever they hadn't moved a tool in the most recent 20 minutes, even when the user was clearly still in them. The `--show-idle` flag is renamed `--hide-idle` (default off — pass it to opt back into v0.2.1 behavior).
+- Idle sessions still get the low-confidence dimmed look via the trajectory's fallback signal, so they're visually distinct from active work.
+
+### Tests
+
+80 still passing. Smoke test against the existing transcript fixtures confirms the `done` verdict at 0.85 confidence is unchanged.
+
 ## [0.2.1] — 2026-05-23
 
 Dogfooding patch — first real run of `agentpulse live` surfaced three UX issues that made the dashboard noisier than useful on a Windows checkout with months of Claude Code history. All three fixed.

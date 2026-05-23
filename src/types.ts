@@ -345,10 +345,17 @@ export interface LiveOptions {
    *  picked up too many idle transcripts to be useful as a "what's happening
    *  now" dashboard). Use `Infinity` to disable. */
   staleMs?: number;
-  /** Include sessions with zero tool invocations in the current window.
-   *  Default: false — the dashboard hides idle sessions so the list reflects
-   *  what's actively running, not what's been touched recently. */
-  showIdle?: boolean;
+  /** Hide sessions with zero tool invocations in the current window.
+   *  Default: false — idle sessions are shown (greyed out via low confidence)
+   *  so you can see your cursor/codex sessions even when they aren't actively
+   *  running tools. Set true to filter them out.
+   *
+   *  v0.2.2 inverted the default: previously this was `showIdle` defaulting
+   *  to false (hide idle). Hiding by default was too aggressive — it filtered
+   *  out users' Cursor/Codex sessions whenever they hadn't moved in the last
+   *  20 minutes, even when they were clearly active in the day.
+   */
+  hideIdle?: boolean;
   /** Maximum number of sessions to render in the list. Default: 10.
    *  Sessions are sorted by lastModified DESC, so the cap keeps the freshest
    *  N visible. Use a large number or 0 to disable. */

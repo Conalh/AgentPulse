@@ -97,11 +97,25 @@ export function deriveProjectName(
 
   const decoded = slug ? decodeSlug(slug) : undefined;
 
-  // Fallback: if the decoded slug is junk (single letter that looks like a
-  // drive prefix), prefer the cwd's basename.
-  if ((!decoded || /^[a-z]$/i.test(decoded)) && cwd) {
+  // Fallback: if the decoded slug is junk (empty, single letter that looks
+  // like a drive prefix, or "C--"-shaped leftover), prefer the cwd basename.
+  const looksJunky =
+    !decoded ||
+    /^[a-z]$/i.test(decoded) ||
+    /^[a-z]--+$/i.test(decoded) ||
+    /^-+$/.test(decoded);
+
+  if (looksJunky && cwd) {
     const fromCwd = basename(cwd);
     if (fromCwd && !/^[a-z]$/i.test(fromCwd)) return fromCwd;
+  }
+
+  // Last resort when even cwd doesn't help: return the slug minus the drive
+  // prefix so the user sees something meaningful (or the original slug if
+  // there's nothing else to fall back on).
+  if (looksJunky && slug) {
+    const stripped = slug.replace(/^[a-z]--+/i, '');
+    return stripped || slug;
   }
 
   return decoded || undefined;
@@ -125,7 +139,11 @@ export function decodeSlug(slug: string): string {
   s = s.replace(/^[a-z]--/i, '');
   // Split on '-' and find the last meaningful segment.
   const parts = s.split('-').filter(Boolean);
-  if (parts.length === 0) return slug;
+  // v0.2.2: when the strip + split leaves nothing (slug was just "C--"
+  // with no remainder), return an empty string so callers know to fall
+  // back to cwd. Returning the original slug (the old behavior) shows
+  // raw "C--" in the dashboard.
+  if (parts.length === 0) return '';
   const last = parts[parts.length - 1]!;
   return last;
 }
