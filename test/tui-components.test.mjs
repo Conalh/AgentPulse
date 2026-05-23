@@ -97,6 +97,42 @@ test('SessionList renders all session names, runtimes, and bucket labels', () =>
   assert.match(frame, /⚠/); // drifting
 });
 
+test('SessionList disambiguates rows that share project+runtime (v0.4.4)', () => {
+  // Regression: real screenshot showed three rows of `core (claude-code)`
+  // because the same project had three distinct sessions. Without
+  // disambiguation, all three rows render identically and look like a
+  // dup-rendering bug. With v0.4.4 we append a 6-char session-id tail
+  // only to the colliding rows.
+  const states = [
+    // Three sessions of the same project + runtime → ALL should get a tail.
+    fixtureState({ id: 'aaaaaa111111', projectName: 'core', bucket: 'idle' }),
+    fixtureState({ id: 'bbbbbb222222', projectName: 'core', bucket: 'idle' }),
+    fixtureState({ id: 'cccccc333333', projectName: 'core', bucket: 'idle' }),
+    // One unique session → must NOT get a tail.
+    fixtureState({ id: 'dddddd444444', projectName: 'standalone', bucket: 'exploring' }),
+  ];
+
+  const { lastFrame } = render(
+    createElement(SessionList, { states, selectedId: 'aaaaaa111111', now: NOW })
+  );
+
+  const frame = lastFrame() ?? '';
+  // Each of the three colliding rows should carry its own id tail.
+  assert.match(frame, /aaaaaa/, 'colliding row 1 should show its id tail');
+  assert.match(frame, /bbbbbb/, 'colliding row 2 should show its id tail');
+  assert.match(frame, /cccccc/, 'colliding row 3 should show its id tail');
+  // The unique row's id must NOT appear.
+  assert.doesNotMatch(
+    frame,
+    /dddddd/,
+    'unique row should not show a disambiguator tail',
+  );
+  // The disambiguator separator " · " should appear three times (once per
+  // colliding row), not on the standalone row.
+  const sepMatches = frame.match(/ · /g) ?? [];
+  assert.equal(sepMatches.length, 3, 'disambiguator separator appears once per colliding row');
+});
+
 test('SessionList renders empty state when there are no sessions', () => {
   const { lastFrame } = render(
     createElement(SessionList, { states: [], selectedId: null, now: NOW })

@@ -88,6 +88,25 @@ function fallbackLabel(state: SessionState): string {
  *  ticks don't cause wrap-shift flicker. */
 const LABEL_COL_WIDTH = 38;
 
+/**
+ * v0.4.4: short session-id tail used to disambiguate rows whose
+ * `projectName + runtime` combination is identical to another visible row.
+ * 6 hex chars is 16M of space — plenty of collision resistance for the
+ * ≤10-session list, but still short enough to fit in the label column
+ * even on the longest project names without aggressive truncation.
+ */
+const DISAMBIG_ID_LEN = 6;
+
+/**
+ * Returns the key used to detect "two rows look the same." Includes runtime
+ * because `core (claude-code)` and `core (cursor)` already look distinct
+ * thanks to the runtime suffix — only intra-runtime collisions need an
+ * extra tail.
+ */
+function labelCollisionKey(label: string, runtime: string): string {
+  return `${label}|${runtime}`;
+}
+
 export function SessionList({ states, selectedId, now }: SessionListProps): React.ReactElement {
   if (states.length === 0) {
     return (
@@ -96,6 +115,15 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
         <Text dimColor>(transcripts must have been updated in the staleMs window)</Text>
       </Box>
     );
+  }
+
+  // v0.4.4: pre-compute label collision counts so we only show the
+  // session-id tail on rows whose project+runtime label appears 2+ times.
+  // Unique rows render exactly as before (no extra visual noise).
+  const labelCounts = new Map<string, number>();
+  for (const s of states) {
+    const key = labelCollisionKey(fallbackLabel(s), s.session.runtime);
+    labelCounts.set(key, (labelCounts.get(key) ?? 0) + 1);
   }
 
   return (
@@ -122,13 +150,23 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
           ? `updated ${formatAgo(now, s.lastUpdated)}`
           : 'no recap yet';
 
+        // v0.4.4: when 2+ visible sessions share the same project+runtime,
+        // append a short hex tail so the list isn't three identical-looking
+        // rows. Only renders on collision — unique rows stay clean.
+        const collisionCount = labelCounts.get(labelCollisionKey(label, s.session.runtime)) ?? 1;
+        const showDisambig = collisionCount >= 2;
+        const disambigSuffix = showDisambig ? ` · ${s.session.id.slice(0, DISAMBIG_ID_LEN)}` : '';
+
         // v0.2.3: compute the label truncation budget from the runtime
         // suffix length so the combined column never exceeds LABEL_COL_WIDTH.
         // Pre-fix, a long slug like `agent-a92e01b8034a7c780-7...` truncated
         // to 22 chars + ` (claude-code)` overflowed the 32-char box and
         // wrapped to two lines, causing layout flicker on every timer tick.
+        //
+        // v0.4.4: also account for the disambiguator suffix when present.
         const runtimeSuffix = ` (${s.session.runtime})`;
-        const labelBudget = Math.max(8, LABEL_COL_WIDTH - runtimeSuffix.length - 1);
+        const reservedSuffix = runtimeSuffix.length + disambigSuffix.length;
+        const labelBudget = Math.max(8, LABEL_COL_WIDTH - reservedSuffix - 1);
         const truncatedLabel = truncate(label, labelBudget);
 
         return (
@@ -140,6 +178,7 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
             <Text>{'  '}</Text>
             <Box width={LABEL_COL_WIDTH}>
               <Text bold={isSelected}>{truncatedLabel}</Text>
+              {showDisambig && <Text dimColor>{disambigSuffix}</Text>}
               <Text dimColor>{runtimeSuffix}</Text>
             </Box>
             <Box width={22}>

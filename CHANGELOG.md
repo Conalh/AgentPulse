@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.4.4] — 2026-05-23
+
+Last visible bug from the v0.4.3-screenshot review.
+
+### Fixed — session list showed three identical "core (claude-code)" rows
+
+When two or more visible sessions shared the same `projectName + runtime` combination — e.g. three separate Claude Code sessions of the same repo — the dashboard rendered them as three visually identical rows. To a viewer who doesn't know each row is a distinct session ID, this reads as a duplicate-rendering bug.
+
+- **`src/tui/SessionList.tsx`** now pre-computes label collision counts once per render, and on any row whose `(label, runtime)` key appears ≥2 times in the visible set, appends a 6-char hex tail of the session id (e.g. `core · c3d456 (claude-code)`). Unique rows render exactly as before — no extra noise.
+- The tail uses the same `dimColor` treatment as the existing runtime suffix, so the project name stays the visually dominant element.
+- The label truncation budget (`LABEL_COL_WIDTH`) accounts for the tail when present, so long project names with a collision still fit in the column without wrap-flicker.
+- Why 6 hex chars: 16M of space is well past collision-resistant for a ≤10-row list, but short enough that even `CapabilityEcho · c3d456 (claude-code)` (38 chars) fits in the column.
+
+### Tests
+
+137 (was 136). One new SessionList test that constructs three colliding rows + one unique row and asserts:
+- Each colliding row carries its own session-id tail
+- The unique row does NOT carry a tail
+- The ` · ` separator appears exactly once per colliding row
+
 ## [0.4.3] — 2026-05-23
 
 Three narrative-quality fixes — all driven by a dogfooded dashboard screenshot the user was about to use as the README hero image. Sometimes the bug only shows up when you're staring at the tool in production.
