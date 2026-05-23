@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.4] — 2026-05-23
+
+### Added
+
+- **`w` / `s` keybindings** (and their shifted variants `W` / `S`) for moving the selection up and down in the live TUI. Pairs with the existing arrow keys and vim-style `k` / `j`. Easier for users who keep their hands on the left side of the keyboard — no need to reach for the arrow cluster or take a hand off the mouse.
+
+Footer + help overlay both updated to advertise the new bindings.
+
 ## [0.2.3] — 2026-05-23
 
 Third dogfooding patch. v0.2.2 fixed the classifier and slug edge cases; this one fixes the visual layout flicker and the noise from subagent transcripts.

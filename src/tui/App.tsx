@@ -51,10 +51,10 @@ function isSubagentSession(s: SessionState): boolean {
 }
 
 const HELP_LINES = [
-  '↑/↓ or k/j   move selection',
-  'r            force refresh on selected session',
-  '?            toggle help',
-  'q / Ctrl-C   quit',
+  '↑/↓, k/j, or w/s   move selection',
+  'r                  force refresh on selected session',
+  '?                  toggle help',
+  'q / Ctrl-C         quit',
 ];
 
 export function App({
@@ -165,12 +165,14 @@ export function App({
       visibleStates.findIndex((s) => s.session.id === selectedId)
     );
 
-    if (key.upArrow || input === 'k') {
+    // Up: arrow / vim-k / WASD-w. Shifted variants honored so users with
+    // sticky shift / caps lock aren't surprised.
+    if (key.upArrow || input === 'k' || input === 'w' || input === 'W') {
       const next = Math.max(0, idx - 1);
       setSelectedId(visibleStates[next]!.session.id);
       return;
     }
-    if (key.downArrow || input === 'j') {
+    if (key.downArrow || input === 'j' || input === 's' || input === 'S') {
       const next = Math.min(visibleStates.length - 1, idx + 1);
       setSelectedId(visibleStates[next]!.session.id);
       return;
@@ -226,7 +228,7 @@ export function App({
       )}
 
       <Box paddingX={1}>
-        <Text dimColor>↑↓ select · r refresh · ? help · q quit</Text>
+        <Text dimColor>↑↓ / WS select · r refresh · ? help · q quit</Text>
       </Box>
     </Box>
   );
