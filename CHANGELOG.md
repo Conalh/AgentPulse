@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.2.9] — 2026-05-23
+
+### Fixed
+
+- **Rapid `?`-spam caused stacked dashboard renders.** Each `?` press toggles the help overlay, which changes the screen height (overlay appears or disappears). When presses landed faster than Ink could complete a render, the diff calculation got confused and the previous frame leaked under the new one. 200 ms debounce on the `?` handler eliminates the case — invisible to a normal human press but throttles a held-down key to single transitions. Other keybindings (selection nav, `r`, `q`) don't need the debounce because they don't change the screen layout.
+
 ## [0.2.8] — 2026-05-23
 
 ### Fixed

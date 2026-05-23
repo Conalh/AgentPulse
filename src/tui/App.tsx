@@ -6,7 +6,7 @@
  * for "Xs ago" labels.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import type {
   OrchestratorEvent,
@@ -70,6 +70,8 @@ export function App({
   const [states, setStates] = useState<SessionState[]>(() => orchestrator.states());
   const [now, setNow] = useState<number>(() => Date.now());
   const [showHelp, setShowHelp] = useState<boolean>(false);
+  // v0.2.9: debounce timestamp for the help-overlay toggle. See `?` handler.
+  const lastHelpToggleRef = useRef<number>(0);
 
   // Filter + cap. Filtering by "active in window" is purely a render concern —
   // the orchestrator still tracks every session, so an idle one becoming
@@ -155,7 +157,17 @@ export function App({
       return;
     }
     if (input === '?') {
-      setShowHelp((v) => !v);
+      // v0.2.9: debounce. Rapid `?`-spam was causing the help overlay to
+      // toggle faster than Ink could complete a render, producing stacked
+      // dashboards (the overlay add/remove changes the screen height; if a
+      // press lands mid-render, the next render diff can leak the previous
+      // frame). 200 ms is invisible to a human pressing once but throttles
+      // a held key down to single transitions.
+      const now = Date.now();
+      if (now - lastHelpToggleRef.current >= 200) {
+        lastHelpToggleRef.current = now;
+        setShowHelp((v) => !v);
+      }
       return;
     }
     if (visibleStates.length === 0) return;
