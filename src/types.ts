@@ -442,4 +442,9 @@ export interface LiveOptions {
    *  `drifting` or `stuck`, the process exits 1 instead of 0. Only honored
    *  in `--once` mode (the interactive TUI ignores it). */
   strict?: boolean;
+  /** v0.4.2: local-notification mode for state-transition alerts. Fires when
+   *  a session flips INTO `drifting` or `stuck`. Default: `'none'` —
+   *  notifications are opt-in because they're nag-prone. See
+   *  `src/notifications.ts` for the trigger policy and channel details. */
+  notify?: import('./notifications.js').NotifyMode;
 }

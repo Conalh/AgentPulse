@@ -12,6 +12,7 @@
 
 import { discoverSessions } from './sessions/index.js';
 import { pulse } from './index.js';
+import { createNotifier } from './notifications.js';
 import type {
   LiveOptions,
   PulseRecap,
@@ -91,6 +92,24 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   } else {
     process.stdout.write(renderTextReport(report) + '\n');
+  }
+
+  // v0.4.2: one-shot notification when --notify is set and any session is
+  // in drifting/stuck. `--once` is a snapshot, not a live monitor — we fire
+  // exactly one notification per invocation regardless of how many sessions
+  // are gating. Anything more would be noisy in a cron context.
+  const notifyMode = opts.notify ?? 'none';
+  if (notifyMode !== 'none' && report.hasGatingFinding) {
+    const notifier = createNotifier({ mode: notifyMode });
+    const offenders = report.sessions.filter((s) => GATING_BUCKETS.has(s.bucket));
+    const count = offenders.length;
+    const firstLabel = offenders[0]?.projectName ?? `session-${offenders[0]?.id.slice(0, 8) ?? '?'}`;
+    const body =
+      count === 1
+        ? `${firstLabel}: ${offenders[0]!.bucket}`
+        : `${count} sessions need attention (e.g. ${firstLabel})`;
+    notifier.notifyOnce(body);
+    notifier.stop();
   }
 
   // CI gating. Strict mode flips exit code when any session lands in a
