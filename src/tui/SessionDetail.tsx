@@ -35,6 +35,28 @@ const SPARKLINE_WIDTH = 24;
 const DETAIL_MIN_HEIGHT = 16;
 
 /**
+ * v0.3.5: pinned narrative-section minimum height. The outer detail box
+ * was stable at 16 lines after v0.3.4, but the narrative INSIDE it still
+ * varied: a 1-line "Your agent has been quiet for 12 minutes" vs. a 3-line
+ * "Your agent has been quiet for 5 minutes. Earlier in the window it made
+ * 12 changes to C:\Dev\fit-ontology\web\app\clients\page.tsx before going
+ * idle. Likely parked, waiting on you or external input." Different
+ * wrapping = different heights = the Signals/Activity/footer shift down
+ * the page even though the outer box is the same size.
+ *
+ * 4 lines covers the typical narrative (1-3 lines) with one line of
+ * padding. Content-heavy verdicts can still grow past 4 if they need to.
+ */
+const NARRATIVE_MIN_HEIGHT = 4;
+
+/**
+ * v0.3.5: pinned signals-section minimum height. Same logic — signals
+ * vary from 1 (idle / done) to 4 (converging / drifting). 5 covers the
+ * "Signals:" header plus up to 4 signal lines.
+ */
+const SIGNALS_MIN_HEIGHT = 5;
+
+/**
  * v0.3.1: Render a single narrative line, parsing `**bold**` Markdown spans
  * into Ink `<Text bold>` nodes. Pre-fix, the narrative templates use `**`
  * for emphasis (which is the right source format for plain-text consumers),
@@ -113,7 +135,7 @@ export function SessionDetail({
         <Text dimColor> ({sess.runtime})</Text>
       </Box>
       <Text dimColor>{sess.transcriptPath}</Text>
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} flexDirection="column" minHeight={NARRATIVE_MIN_HEIGHT}>
         {narrative.split('\n').map((line, i) => (
           <MdLine key={i} text={line} />
         ))}
@@ -134,9 +156,13 @@ export function SessionDetail({
         )}
       </Box>
 
-      {verdict && verdict.signals.length > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text>Signals:</Text>
+      {/* v0.3.5: always render the Signals box (when there's a verdict) so
+          the section doesn't appear/disappear; minHeight reserves enough
+          lines for the worst case (4 signals + header). Short signal sets
+          get bottom padding inside the box. */}
+      {verdict && (
+        <Box flexDirection="column" marginTop={1} minHeight={SIGNALS_MIN_HEIGHT}>
+          {verdict.signals.length > 0 && <Text>Signals:</Text>}
           {verdict.signals.map((sig, i) => (
             <Text key={i}> · {sig}</Text>
           ))}

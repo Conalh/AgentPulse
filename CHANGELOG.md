@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.3.5] — 2026-05-23
+
+### Fixed
+
+- **Narrative and signals sections still shifted inside the (stable) detail box.** v0.3.4 pinned the outer box to `minHeight = 16`, which stopped the box itself from resizing. But the sections inside still varied: a 1-line narrative ("Your agent has been quiet for 12 minutes.") vs a 3-line narrative (with a long file path wrapping) pushed Signals/Activity down by 2 lines even though the outer box was the same height. Signals also varied 1-4 lines per session.
+- Pinned `NARRATIVE_MIN_HEIGHT = 4` and `SIGNALS_MIN_HEIGHT = 5` on the inner section boxes. Short content gets bottom padding inside its section; long content still expands. Sections now hold their vertical position even when bucket transitions change narrative length.
+
+This is the **fourth** fixed-dimension fix on the rendering layer. Pattern: pin every cell whose content varies on the axis it varies along.
+
 ## [0.3.4] — 2026-05-23
 
 ### Fixed
