@@ -2,9 +2,20 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
-## [0.1.0] — Unreleased
+## [0.1.0] — 2026-05-23
 
-Initial release. Live trajectory verdict for AI coding agent sessions.
+Initial release. Live trajectory verdict for AI coding agent sessions. Local-only, deterministic, no LLM, no outbound network calls.
+
+### Validated end-to-end
+
+- Five-layer pipeline integrates cleanly: parser → enrich → outcome/trajectory → narrative → CLI
+- 53 tests across all layers, all passing
+- Smoke-tested against real Claude Code / Cursor / Codex transcript fixtures — produces plain-English verdicts at sensible confidence levels
+- Build clean with `tsc` strict mode
+
+### Built in parallel
+
+Four feature branches developed concurrently against a locked `src/types.ts` contract, then merged in layer order. Each layer's PR is independently passable; synthesis required only one test update to reflect non-stub pipeline behavior.
 
 ### Architecture
 
