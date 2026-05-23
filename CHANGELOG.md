@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.3.4] — 2026-05-23
+
+### Fixed
+
+- **Detail pane resized vertically when navigating between sessions.** Pre-fix, `SessionDetail` sized itself to its content — short for idle sessions (~6 lines), tall for drifting (~16+ lines). Arrow-navigating up/down between sessions resized the bordered box each time, which shifted the global footer + RAGE branding up and down — visible "jerk" the user reported. Pinned `minHeight = 16` on the detail pane's outer Box: short content gets bottom padding, content-heavy verdicts (drifting with many findings) still expand. The footer + branding now stay at a fixed vertical position regardless of selection.
+
+This is the third fixed-size-cell fix on the dashboard rendering layer:
+- v0.2.3 pinned `SessionList` row width (no horizontal wrap on long slugs)
+- v0.3.3 pinned the sparkline cell width (no horizontal jerk on sparkline content changes)
+- v0.3.4 pins the `SessionDetail` minimum height (no vertical jerk on selection change)
+
+General principle: any TUI cell whose content changes over time needs a pinned dimension on the dimension that varies, or the surrounding layout will visibly jitter.
+
 ## [0.3.3] — 2026-05-23
 
 ### Fixed

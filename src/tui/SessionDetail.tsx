@@ -20,6 +20,21 @@ import { sparkline } from './sparkline.js';
 const SPARKLINE_WIDTH = 24;
 
 /**
+ * v0.3.4: pinned detail-pane minimum height. The pre-fix detail pane sized
+ * itself to its content — short for idle sessions (~6 lines: path,
+ * narrative, verdict, 1 signal, activity, footer), tall for drifting
+ * sessions (~16+ lines: longer narrative, multiple signals, drift findings,
+ * activity, footer). When the user arrow-navigated up/down between
+ * sessions, the entire bordered box resized vertically each time, which
+ * shifted the global footer + RAGE branding up and down — visible "jerk".
+ *
+ * Reserving 16 lines covers the typical converging case cleanly and lets
+ * unusually content-heavy verdicts (drifting with many findings) expand
+ * without artificially capping them. Short content gets bottom padding.
+ */
+const DETAIL_MIN_HEIGHT = 16;
+
+/**
  * v0.3.1: Render a single narrative line, parsing `**bold**` Markdown spans
  * into Ink `<Text bold>` nodes. Pre-fix, the narrative templates use `**`
  * for emphasis (which is the right source format for plain-text consumers),
@@ -67,7 +82,7 @@ export function SessionDetail({
 }: SessionDetailProps): React.ReactElement {
   if (!state) {
     return (
-      <Box flexDirection="column" paddingX={1}>
+      <Box flexDirection="column" paddingX={1} minHeight={DETAIL_MIN_HEIGHT}>
         <Text dimColor>No session selected.</Text>
       </Box>
     );
@@ -92,7 +107,7 @@ export function SessionDetail({
   const nextRefreshLabel = `~${formatDelta(nextRefreshMs)}`;
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} minHeight={DETAIL_MIN_HEIGHT}>
       <Box>
         <Text bold>{projectLabel}</Text>
         <Text dimColor> ({sess.runtime})</Text>
