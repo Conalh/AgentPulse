@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { colorFor, pillFor, isLowConfidence } from '../dist/tui/theme.js';
 import { formatAgo, formatDelta } from '../dist/tui/duration.js';
 import { compareByProject, urgencyOf, URGENCY_RANK } from '../dist/tui/sort.js';
+import { summarizeDriftKinds } from '../dist/tui/driftSummary.js';
 
 test('theme.colorFor returns the expected color per bucket', () => {
   assert.equal(colorFor('converging'), 'green');
@@ -155,6 +156,54 @@ test('compareByProject: lastUpdated DESC breaks ties on identical project+runtim
   ];
   const sorted = [...states].sort(compareByProject);
   assert.deepEqual(sorted.map((s) => s.session.id), ['b', 'c', 'a']);
+});
+
+// ── v0.4.8 — whitelist-preview drift-kind summary ──────────────────────
+
+function driftFixture(kind) {
+  return {
+    tool: 'session_trail',
+    kind,
+    severity: 'high',
+    message: 'fixture drift finding',
+  };
+}
+
+test('summarizeDriftKinds: empty list → empty string', () => {
+  assert.equal(summarizeDriftKinds([]), '');
+});
+
+test('summarizeDriftKinds: strips `agent_pulse.live_drift_` namespace', () => {
+  const drifts = [driftFixture('agent_pulse.live_drift_shell_exfil')];
+  assert.equal(summarizeDriftKinds(drifts), 'shell_exfil');
+});
+
+test('summarizeDriftKinds: 1–2 findings render in full, comma-separated', () => {
+  const drifts = [
+    driftFixture('agent_pulse.live_drift_shell_exfil'),
+    driftFixture('agent_pulse.live_drift_privileged_read'),
+  ];
+  assert.equal(summarizeDriftKinds(drifts), 'shell_exfil, privileged_read');
+});
+
+test('summarizeDriftKinds: 3+ findings → first two + "+N more" tail', () => {
+  const drifts = [
+    driftFixture('agent_pulse.live_drift_shell_exfil'),
+    driftFixture('agent_pulse.live_drift_privileged_read'),
+    driftFixture('agent_pulse.live_drift_write_outside_repo'),
+    driftFixture('agent_pulse.live_drift_curl_pipe_sh'),
+  ];
+  assert.equal(
+    summarizeDriftKinds(drifts),
+    'shell_exfil, privileged_read, +2 more',
+  );
+});
+
+test('summarizeDriftKinds: kind without the namespace prefix passes through unchanged', () => {
+  // Defensive: if a finding kind from a different tool surfaces here, the
+  // strip logic falls back to the raw kind rather than mangling it.
+  const drifts = [driftFixture('scope_trail.permission_widened')];
+  assert.equal(summarizeDriftKinds(drifts), 'scope_trail.permission_widened');
 });
 
 test('compareByProject: project sort is case-insensitive', () => {

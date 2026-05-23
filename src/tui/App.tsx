@@ -8,6 +8,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
+import type { Finding } from 'agent-gov-core';
 import type {
   OrchestratorEvent,
   PulseOrchestrator,
@@ -22,6 +23,7 @@ import { SessionDetail } from './SessionDetail.js';
 import { formatDelta } from './duration.js';
 import { Splash } from './Splash.js';
 import { compareByProject } from './sort.js';
+import { summarizeDriftKinds } from './driftSummary.js';
 
 export interface AppProps {
   orchestrator: PulseOrchestrator;
@@ -79,6 +81,14 @@ const FLASH_DURATION_MS = 2000;
  */
 const A_KEY_DEBOUNCE_MS = 300;
 
+/**
+ * v0.4.8: how long the whitelist preview lingers before auto-cancelling.
+ * 3 seconds is enough to scan a short list of finding messages and
+ * decide; long enough that a key-bounce won't expire it, short enough
+ * that a user who walked away doesn't return to a primed disk-write.
+ */
+const WHITELIST_PREVIEW_MS = 3000;
+
 export function App({
   orchestrator,
   watcher,
@@ -103,6 +113,16 @@ export function App({
   // re-pulses); Esc cancels.
   const [renameMode, setRenameMode] = useState<boolean>(false);
   const [renameBuffer, setRenameBuffer] = useState<string>('');
+  // v0.4.8: whitelist preview state. First `a` press shows the preview;
+  // second `a` press within WHITELIST_PREVIEW_MS commits. Any other key
+  // cancels the preview (but that key still does its normal thing).
+  // `drifts` is captured at preview time so a refresh in the 3s window
+  // can't sneak new findings into the commit set.
+  const [whitelistPreview, setWhitelistPreview] = useState<{
+    sessionId: string;
+    drifts: Finding[];
+    expiresAt: number;
+  } | null>(null);
   // v0.4.1: transient flash message shown in the detail pane after a
   // successful whitelist write. Cleared after FLASH_DURATION_MS.
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
@@ -206,6 +226,26 @@ export function App({
     return () => clearInterval(id);
   }, []);
 
+  // v0.4.8: auto-expire the whitelist preview when its window elapses.
+  // The "any key cancels" branch in useInput handles the common case;
+  // this catches the no-input case (user walked away after one `a`).
+  useEffect(() => {
+    if (!whitelistPreview) return;
+    const remaining = whitelistPreview.expiresAt - Date.now();
+    if (remaining <= 0) {
+      setWhitelistPreview(null);
+      return;
+    }
+    const id = setTimeout(() => {
+      // Only clear if the same preview is still in place — a fresh
+      // preview (or a commit/cancel) would have replaced state already.
+      setWhitelistPreview((p) =>
+        p && p.expiresAt === whitelistPreview.expiresAt ? null : p
+      );
+    }, remaining);
+    return () => clearTimeout(id);
+  }, [whitelistPreview]);
+
   // If the selected session disappears from the visible list, fall back to
   // the first visible one. (When the user toggles showIdle off, their previous
   // selection may now be hidden.)
@@ -259,6 +299,21 @@ export function App({
         setRenameBuffer((b) => b + input);
       }
       return;
+    }
+
+    // v0.4.8: any non-`a` key (or `a` after preview expired) cancels the
+    // whitelist preview. The cancelling key still does its normal thing
+    // afterwards, so navigation / refresh / help-toggle all behave
+    // exactly as before — pressing them just additionally clears a
+    // primed write. This keeps the preview from getting stuck on the
+    // screen when the user moves on.
+    if (whitelistPreview) {
+      const isAKey = input === 'a' && !key.ctrl && !key.meta;
+      const isFresh = Date.now() < whitelistPreview.expiresAt;
+      if (!isAKey || !isFresh) {
+        setWhitelistPreview(null);
+        // Fall through — let the key do its normal action below.
+      }
     }
 
     if (input === 'q' || (key.ctrl && input === 'c')) {
@@ -321,35 +376,61 @@ export function App({
     // v0.4.1: `a` — whitelist the current session's drift findings. Writes
     // an exception baseline at `<cwd>/.agentpulse-exceptions.json` and then
     // re-pulses so the verdict clears. Debounced (key-hold protection).
+    //
+    // v0.4.8: two-stage confirm. First `a` press SHOWS a preview banner
+    // listing what's about to be written; the disk write only fires on
+    // a second `a` press within WHITELIST_PREVIEW_MS. Any other key (or
+    // a timeout) cancels. This protects against a mistaken keypress
+    // permanently whitelisting findings the user couldn't see clearly.
     if (input === 'a' && selectedId) {
       const nowMs = Date.now();
       if (nowMs - lastAKeyRef.current < A_KEY_DEBOUNCE_MS) return;
       lastAKeyRef.current = nowMs;
+
+      // Stage 2: a previewed write that matches this session and is still
+      // fresh → commit. We use the drifts captured at preview time so a
+      // refresh during the 3 s window can't slip new findings into the
+      // commit set silently.
+      if (
+        whitelistPreview &&
+        whitelistPreview.sessionId === selectedId &&
+        nowMs < whitelistPreview.expiresAt
+      ) {
+        const { drifts } = whitelistPreview;
+        const state = visibleStates.find((s) => s.session.id === selectedId);
+        const sessionCwd = state?.session.cwd;
+        setWhitelistPreview(null); // clear before async work
+        if (!sessionCwd || drifts.length === 0) return;
+        const count = drifts.length;
+        void appendExceptions(sessionCwd, drifts)
+          .then(() => {
+            if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+            setFlashMessage(
+              `✓ whitelisted ${count} finding${count === 1 ? '' : 's'} — refreshing…`
+            );
+            flashTimerRef.current = setTimeout(() => {
+              setFlashMessage(null);
+              flashTimerRef.current = null;
+            }, FLASH_DURATION_MS);
+            return orchestrator.refresh(selectedId);
+          })
+          .catch(() => {
+            /* surfaced via SessionState.error on the next refresh */
+          });
+        return;
+      }
+
+      // Stage 1: first press → set up the preview.
       const state = visibleStates.find((s) => s.session.id === selectedId);
       if (!state || !state.recap) return;
       const drifts = state.recap.verdict.drifts;
       if (drifts.length === 0) return; // nothing to whitelist
-      const sessionCwd = state.session.cwd;
-      if (!sessionCwd) return; // no cwd → don't know where to write
-      const count = drifts.length;
-      void appendExceptions(sessionCwd, drifts)
-        .then(() => {
-          // Surface success briefly, then refresh — the refresh will clear
-          // the drift findings from the verdict, so the flash + the now-
-          // clean detail pane is the user feedback.
-          if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-          setFlashMessage(
-            `✓ whitelisted ${count} finding${count === 1 ? '' : 's'} — refreshing…`
-          );
-          flashTimerRef.current = setTimeout(() => {
-            setFlashMessage(null);
-            flashTimerRef.current = null;
-          }, FLASH_DURATION_MS);
-          return orchestrator.refresh(selectedId);
-        })
-        .catch(() => {
-          /* surfaced via SessionState.error on the next refresh */
-        });
+      if (!state.session.cwd) return; // no cwd → don't know where to write
+      setWhitelistPreview({
+        sessionId: selectedId,
+        drifts,
+        expiresAt: nowMs + WHITELIST_PREVIEW_MS,
+      });
       return;
     }
   });
@@ -415,6 +496,24 @@ export function App({
             <Text color="cyan">{renameBuffer}</Text>
             <Text color="cyan">█</Text>
             <Text dimColor>  · Enter save · Esc cancel · empty + Enter clears</Text>
+          </Text>
+        ) : whitelistPreview && now < whitelistPreview.expiresAt ? (
+          <Text>
+            <Text color="yellow" bold>⚠ Whitelist </Text>
+            <Text color="yellow" bold>
+              {whitelistPreview.drifts.length}
+            </Text>
+            <Text color="yellow" bold>
+              {' '}finding{whitelistPreview.drifts.length === 1 ? '' : 's'}?
+            </Text>
+            <Text dimColor>{' ('}</Text>
+            <Text>{summarizeDriftKinds(whitelistPreview.drifts)}</Text>
+            <Text dimColor>{') '}</Text>
+            <Text dimColor>
+              · press <Text bold color="yellow">a</Text> to confirm (
+              {Math.max(0, Math.ceil((whitelistPreview.expiresAt - now) / 1000))}
+              s) · any key cancels
+            </Text>
           </Text>
         ) : (
           <Text dimColor>↑↓ / WS select · r refresh · a whitelist · n rename · ? help · q quit</Text>

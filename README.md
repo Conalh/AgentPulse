@@ -66,7 +66,7 @@ agentpulse live [options]
 | --- | --- |
 | ↑ ↓ / k j / w s | Move selection |
 | r | Force refresh on selected session |
-| **a** | **Whitelist current session's drift findings** (v0.4.1+) |
+| **a** | **Whitelist current session's drift findings** — first press shows preview, second press within 3s commits (v0.4.1+, two-stage in v0.4.8+) |
 | **n** | **Name / rename the selected session** (alias) (v0.4.7+) |
 | ? | Toggle help overlay |
 | q / Ctrl-C | Quit |
@@ -107,7 +107,9 @@ Empty + Enter clears the alias.
 
 ## Exception baseline (v0.4.1+)
 
-Press `a` on a `drifting` session to whitelist its findings — AgentPulse appends their fingerprints to `<session.cwd>/.agentpulse-exceptions.json`, refreshes the session, and the verdict re-classifies away from `drifting` instantly.
+Press `a` on a `drifting` session to surface a **whitelist preview** in the footer — kind summary, count, 3-second confirmation window. Press `a` again within the window to commit; any other key cancels. AgentPulse appends the previewed fingerprints to `<session.cwd>/.agentpulse-exceptions.json`, refreshes the session, and the verdict re-classifies away from `drifting` instantly.
+
+The two-stage confirm (v0.4.8+) protects against a stray keypress permanently whitelisting findings the user couldn't see clearly. The captured drift set is the one written — a refresh during the 3-second window can't slip new findings into the commit silently.
 
 The exception file is a simple JSON list keyed by stable `Finding.fingerprint`:
 

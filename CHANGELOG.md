@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.4.8] — 2026-05-23
+
+### Changed — `a` is now a two-stage confirm
+
+Pre-v0.4.8, pressing `a` on a `drifting` session wrote its findings to `.agentpulse-exceptions.json` immediately. A stray keypress could permanently whitelist findings the user never properly inspected. v0.4.8 inserts a preview step.
+
+- **First `a` press** swaps the keybind footer for a yellow preview banner:
+
+  ```
+  ⚠ Whitelist 3 findings? (shell_exfil, privileged_read, +1 more) · press a to confirm (3s) · any key cancels
+  ```
+
+  The countdown ticks down each second using the dashboard's existing 1s tick — no new timer infrastructure.
+- **Second `a` press within 3 seconds** commits the write. The drift set captured at preview time is what gets written — a background refresh during the window can't slip new findings into the commit silently.
+- **Any other key** cancels the preview and then performs its normal action (arrow keys still move selection, `r` still refreshes, `q` still quits). No "modal state stuck on screen" failure mode.
+- **3-second timeout** auto-cancels. A `useEffect` keyed on the preview state clears it when the window elapses.
+
+### Architecture
+
+- New `src/tui/driftSummary.ts` houses the pure `summarizeDriftKinds(drifts)` helper used by the banner — strips the `agent_pulse.live_drift_` namespace from each kind, renders ≤2 in full, collapses 3+ to `kind1, kind2, +N more`. Pure module, no React/Ink — unit-testable.
+- `src/tui/App.tsx` gained a `whitelistPreview: { sessionId, drifts, expiresAt } | null` state, a stage-2 branch at the top of the `a` handler that runs the existing `appendExceptions` write only when a fresh matching preview is present, and a cancel-on-any-other-key clause at the top of the input handler.
+- The `WHITELIST_PREVIEW_MS = 3000` constant tunes the window.
+
+### Tests
+
+163 (was 158). Five new `tui-helpers.test.mjs` tests covering `summarizeDriftKinds`:
+- Empty list → empty string
+- Single finding → namespace stripped
+- 1–2 findings → comma-joined in full
+- 3+ findings → first two + `+N more`
+- Foreign-tool kind without the namespace prefix passes through unchanged
+
 ## [0.4.7] — 2026-05-23
 
 ### Added — agent aliases
