@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.5.2] — 2026-05-23
+
+Four findings from the post-v0.5 internal inspection. None affect what the dashboard renders; all close real correctness or UX gaps.
+
+### Fixed — rename mode could write to the wrong session (HIGH)
+
+`src/tui/App.tsx` read `selectedId` at Enter-time when committing a rename. If the originally-selected session was removed by the watcher mid-rename (file deleted, project closed, etc.), the auto-fallback `useEffect` would jump `selectedId` to `visibleStates[0]` — and the typed alias would silently write to that fallback session instead. Narrow race window but a silent corruption.
+
+- A new `renameTargetId` state captures the session id at `n`-press time. The Enter handler uses the captured id, not the current `selectedId`. `Esc` and the cleared-buffer path also clear the target.
+
+### Fixed — concurrent `setAlias` / `appendExceptions` could lose writes (MEDIUM)
+
+Both `src/aliases.ts:setAlias` and `src/exceptions.ts:appendExceptions` did `readFile → modify → writeFile` with no locking. Two near-concurrent calls would each read the pre-existing file, each write their own version, and the second silently wiped the first.
+
+- Both modules now serialize writes via a **per-path promise queue**. The queue is keyed by resolved file path so different home dirs (and test tmpdirs) don't share a lane. A rejected earlier op doesn't block subsequent callers — the chain swallows internally so each caller gets exactly one error surface (their own `await`). Cleanup uses `.then(onOk, onErr)` rather than `.finally` to keep the cleanup branch terminal and prevent an unhandled-rejection chain when an op rejects.
+
+### Fixed — notifier ignored aliases (MEDIUM)
+
+`src/tui/index.ts` constructed the notification body label from `event.state.session.projectName ?? 'session'`. A user who'd aliased their session `CC1` still saw "AgentPulse: drifting" in the OS toast, not "CC1: drifting". And when `projectName` was undefined entirely (rare but real), the literal string `'session: drifting'` was useless.
+
+- Label resolution now prefers `state.alias ?? projectName ?? \`session-<id-prefix>\``. Aliased users get their alias; un-aliased users get the project name; unknown-project users get a stable session-id stub instead of bare `'session'`.
+
+### Fixed — stale `@v0.4.2` Action refs (LOW)
+
+The README example, `examples/agentpulse-pr-check.yml`, and the action.yml comment all referenced `Conalh/AgentPulse@v0.4.2` — six releases out of date. First-time users copying the README would have pinned a 6-version-old git ref.
+
+- All three locations bumped to `@v0.5.2`.
+
+### Tests
+
+166 (was 163). Three new tests:
+
+- `aliases.test.mjs`: 5 concurrent `setAlias` calls preserve all entries (was a data-loss race)
+- `aliases.test.mjs`: a failing write doesn't block subsequent callers
+- `exceptions.test.mjs`: 5 concurrent `appendExceptions` calls preserve all fingerprints (was a data-loss race)
+
+The rename-target capture and notifier-label changes are small enough that the existing TUI test fixtures cover their type contracts; their UX behaviour is verified manually (writing to a deleted session is a watcher-removal race that's hard to reproduce reliably in test, and the notifier change is a label-formatting tweak).
+
 ## [0.5.1] — 2026-05-23
 
 ### Fixed — orphan parser files shipping in the v0.5.0 tarball

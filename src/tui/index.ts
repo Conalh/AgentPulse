@@ -56,11 +56,17 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
       const next = event.state.recap?.verdict.bucket;
       if (next) {
         const prev = previousBuckets.get(sid) ?? null;
-        notifier.onTransition(
-          prev,
-          next,
-          event.state.session.projectName ?? 'session'
-        );
+        // v0.5.2: prefer the user-set alias for the notification label so
+        // an OS toast / bell-with-stderr-context reads as "CC1: drifting"
+        // when the user has named their session, not "AgentPulse:
+        // drifting". Falls back to the project name and finally to a
+        // session-id stub so the label is never the bare literal
+        // 'session'.
+        const label =
+          event.state.alias ??
+          event.state.session.projectName ??
+          `session-${sid.slice(0, 8)}`;
+        notifier.onTransition(prev, next, label);
         previousBuckets.set(sid, next);
       }
     } else if (event.type === 'session-removed') {

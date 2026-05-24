@@ -227,3 +227,63 @@ test('setAlias: empty sessionId throws (caller error)', async () => {
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('setAlias: concurrent writes do not lose each other (v0.5.2)', async () => {
+  // Pre-v0.5.2, two near-concurrent setAlias calls each read the
+  // pre-existing file before the other's writeFile resolved — both saw
+  // {} as the starting state, both wrote their own single-key file, and
+  // the second silently wiped the first.
+  //
+  // With the per-path write queue, the second call awaits the first's
+  // writeFile before starting its own readFile, so both entries survive.
+  const home = mkTmpHome();
+  try {
+    // Fire 5 concurrent setAlias calls — exactly the failure mode the
+    // pre-fix code couldn't handle.
+    await Promise.all([
+      setAlias('sess-a', 'AAA', { home }),
+      setAlias('sess-b', 'BBB', { home }),
+      setAlias('sess-c', 'CCC', { home }),
+      setAlias('sess-d', 'DDD', { home }),
+      setAlias('sess-e', 'EEE', { home }),
+    ]);
+
+    const file = JSON.parse(readFileSync(homeAliasPath(home), 'utf8'));
+    assert.equal(file.aliases['sess-a'], 'AAA', 'first concurrent write survived');
+    assert.equal(file.aliases['sess-b'], 'BBB');
+    assert.equal(file.aliases['sess-c'], 'CCC');
+    assert.equal(file.aliases['sess-d'], 'DDD');
+    assert.equal(file.aliases['sess-e'], 'EEE');
+    assert.equal(Object.keys(file.aliases).length, 5, 'all 5 entries present');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('setAlias: a failing write does not block the next caller (v0.5.2)', async () => {
+  // The queue chains via `.catch(() => {}).then(op)` so a rejected
+  // earlier op shouldn't poison subsequent calls. Verify by pointing
+  // the first call at a malformed existing file (which will reject)
+  // and confirming a follow-up call still succeeds.
+  const home = mkTmpHome();
+  try {
+    mkdirSync(join(home, '.agentpulse'));
+    writeFileSync(homeAliasPath(home), 'not valid {');
+
+    // Fire failing call + good call back-to-back. The good call
+    // overwrites the malformed file so it succeeds.
+    const failing = setAlias('sess-x', 'XXX', { home });
+    // Don't await `failing` — the chained call has to enqueue while
+    // the first is in flight to exercise the queue's failure path.
+    await assert.rejects(failing, /not valid JSON/i);
+
+    // After a failing write resolves, the queue's cleanup runs and the
+    // next call's mkdir+writeFile re-creates a valid file fresh.
+    rmSync(homeAliasPath(home), { force: true });
+    await setAlias('sess-y', 'YYY', { home });
+    const file = JSON.parse(readFileSync(homeAliasPath(home), 'utf8'));
+    assert.equal(file.aliases['sess-y'], 'YYY');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

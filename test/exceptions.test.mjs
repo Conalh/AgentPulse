@@ -191,3 +191,33 @@ test('loadExceptions accepts a direct file path as well as a directory', async (
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('appendExceptions: concurrent appends do not lose each other (v0.5.2)', async () => {
+  // Pre-v0.5.2, two near-concurrent appendExceptions calls each read the
+  // pre-existing file before the other's writeFile resolved — both saw
+  // the same starting state, both wrote their own append, and the second
+  // silently wiped the first's new entry. With the per-path write queue
+  // both entries survive.
+  const dir = mkTmp();
+  try {
+    const drifts = Array.from({ length: 5 }, (_, i) => ({
+      tool: 'session_trail',
+      kind: 'session_trail.test_kind',
+      severity: 'high',
+      message: `drift ${i}`,
+      fingerprint: `fp-concurrent-${i}`,
+    }));
+
+    // Fire 5 concurrent single-drift appends — exactly the failure mode
+    // the pre-fix code couldn't handle.
+    await Promise.all(drifts.map((d) => appendExceptions(dir, [d])));
+
+    const set = await loadExceptions(dir);
+    for (let i = 0; i < 5; i += 1) {
+      assert.ok(set.has(`fp-concurrent-${i}`), `fp-concurrent-${i} should have survived`);
+    }
+    assert.equal(set.size, 5, 'all 5 fingerprints present');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

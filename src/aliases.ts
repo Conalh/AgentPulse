@@ -131,6 +131,38 @@ export interface SetAliasOptions {
 }
 
 /**
+ * v0.5.2: per-file write queue. Two near-concurrent `setAlias` calls used
+ * to race on the read-modify-write cycle — both would read the
+ * pre-existing file, both would write their own version, and the second
+ * call's write would silently wipe the first. Now writes are serialized
+ * by the resolved file path: the second call awaits the first's
+ * `writeFile` before starting its own `readFile`.
+ *
+ * Keyed by path so different home directories (real vs. test tmpdirs)
+ * don't share a queue.
+ */
+const writeQueues = new Map<string, Promise<void>>();
+
+function enqueueWrite(path: string, op: () => Promise<void>): Promise<void> {
+  const previous = writeQueues.get(path) ?? Promise.resolve();
+  // Chain regardless of whether `previous` rejected — a failed write
+  // shouldn't block the next caller. We swallow its error here; the
+  // failing caller already received it via their own promise.
+  const next = previous.catch(() => {}).then(op);
+  writeQueues.set(path, next);
+  // Clean up the queue once this op settles so a long-idle path doesn't
+  // leak the latest promise. Use `.then(onOk, onErr)` (vs. `.finally`)
+  // because `.finally` propagates the parent's rejection into a new
+  // unhandled chain — the caller's own `await next` already exposes
+  // any error, so the cleanup must be a terminal branch that swallows.
+  const cleanup = (): void => {
+    if (writeQueues.get(path) === next) writeQueues.delete(path);
+  };
+  next.then(cleanup, cleanup);
+  return next;
+}
+
+/**
  * Set (or update) an alias in the home file. The cwd file is never
  * written by this function — promoting to a shared file is a manual,
  * deliberate step. The home directory (`~/.agentpulse/`) is created on
@@ -138,6 +170,10 @@ export interface SetAliasOptions {
  *
  * Passing an empty / whitespace-only alias removes the entry, so
  * `n`-then-Enter on an empty buffer is the natural "clear alias" path.
+ *
+ * v0.5.2: serialized via `enqueueWrite` against the resolved file path,
+ * so two `setAlias` calls fired back-to-back can't lose each other's
+ * changes through a read-modify-write race.
  */
 export async function setAlias(
   sessionId: string,
@@ -146,44 +182,46 @@ export async function setAlias(
 ): Promise<void> {
   if (!sessionId) throw new Error('setAlias: sessionId is required');
   const path = homeAliasPath(opts.home);
-  await mkdir(dirname(path), { recursive: true });
+  return enqueueWrite(path, async () => {
+    await mkdir(dirname(path), { recursive: true });
 
-  const existing: AliasFile = { version: 1, aliases: {} };
-  let raw: string | null = null;
-  try {
-    raw = await readFile(path, 'utf8');
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== 'ENOENT') throw err;
-  }
-  if (raw !== null) {
-    let parsed: unknown;
+    const existing: AliasFile = { version: 1, aliases: {} };
+    let raw: string | null = null;
     try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // Malformed existing file → refuse to clobber. The user can fix the
-      // file by hand; we'd rather error than silently destroy data.
-      throw new Error(
-        `setAlias: existing ${HOME_ALIAS_FILENAME} is not valid JSON; refusing to overwrite`
-      );
+      raw = await readFile(path, 'utf8');
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw err;
     }
-    if (parsed && typeof parsed === 'object') {
-      const file = parsed as Partial<AliasFile>;
-      if (file.aliases && typeof file.aliases === 'object') {
-        for (const [k, v] of Object.entries(file.aliases as Record<string, unknown>)) {
-          if (typeof k === 'string' && typeof v === 'string') existing.aliases[k] = v;
-        }
+    if (raw !== null) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        // Malformed existing file → refuse to clobber. The user can fix the
+        // file by hand; we'd rather error than silently destroy data.
+        throw new Error(
+          `setAlias: existing ${HOME_ALIAS_FILENAME} is not valid JSON; refusing to overwrite`
+        );
       }
-      if (typeof file.version === 'number') existing.version = file.version;
+      if (parsed && typeof parsed === 'object') {
+        const file = parsed as Partial<AliasFile>;
+        if (file.aliases && typeof file.aliases === 'object') {
+          for (const [k, v] of Object.entries(file.aliases as Record<string, unknown>)) {
+            if (typeof k === 'string' && typeof v === 'string') existing.aliases[k] = v;
+          }
+        }
+        if (typeof file.version === 'number') existing.version = file.version;
+      }
     }
-  }
 
-  const cleaned = alias.trim();
-  if (cleaned.length === 0) {
-    delete existing.aliases[sessionId];
-  } else {
-    existing.aliases[sessionId] = cleaned;
-  }
+    const cleaned = alias.trim();
+    if (cleaned.length === 0) {
+      delete existing.aliases[sessionId];
+    } else {
+      existing.aliases[sessionId] = cleaned;
+    }
 
-  await writeFile(path, `${JSON.stringify(existing, null, 2)}\n`, 'utf8');
+    await writeFile(path, `${JSON.stringify(existing, null, 2)}\n`, 'utf8');
+  });
 }

@@ -114,7 +114,7 @@ runs:
     - name: Install AgentPulse dependencies + build
       shell: bash
       working-directory: ${{ github.action_path }}
-      # We run from the action's own git ref (e.g. `Conalh/AgentPulse@v0.4.2`),
+      # We run from the action's own git ref (e.g. `Conalh/AgentPulse@v0.5.2`),
       # so the checkout already has the right source. Install runtime deps
       # only (no test deps) and tsc-build to `dist/`. AgentPulse keeps its
       # build step fast (no bundler) — adds maybe 5 seconds to the job.

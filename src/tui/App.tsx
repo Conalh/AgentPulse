@@ -111,8 +111,17 @@ export function App({
   // `renameBuffer` instead of the normal navigation/action handlers.
   // Enter commits (writes the alias to ~/.agentpulse/aliases.json and
   // re-pulses); Esc cancels.
+  //
+  // v0.5.2: also capture the TARGET session id at `n`-press time. The
+  // selectedId can change mid-rename if the watcher removes the selected
+  // session (the auto-fallback effect at line 252-259 jumps selectedId to
+  // visibleStates[0]). Pre-fix, the Enter handler read `selectedId` and
+  // could write the typed alias to the WRONG session — silent data
+  // corruption. Now we use the captured id no matter what selectedId did
+  // during the typing window.
   const [renameMode, setRenameMode] = useState<boolean>(false);
   const [renameBuffer, setRenameBuffer] = useState<string>('');
+  const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   // v0.4.8: whitelist preview state. First `a` press shows the preview;
   // second `a` press within WHITELIST_PREVIEW_MS commits. Any other key
   // cancels the preview (but that key still does its normal thing).
@@ -269,13 +278,21 @@ export function App({
       if (key.escape) {
         setRenameMode(false);
         setRenameBuffer('');
+        setRenameTargetId(null);
         return;
       }
       if (key.return) {
-        const target = selectedId;
+        // v0.5.2: commit using the TARGET id captured at `n`-press time,
+        // not the current selectedId. If the originally-selected session
+        // was removed by the watcher mid-rename, the auto-fallback effect
+        // would have moved selectedId to a different session — and
+        // pre-fix the typed alias would have written to that wrong
+        // session. Capturing at entry-time eliminates the race.
+        const target = renameTargetId;
         const value = renameBuffer;
         setRenameMode(false);
         setRenameBuffer('');
+        setRenameTargetId(null);
         if (target) {
           // setAlias('', '') (empty after trim) deletes the entry — this is
           // the intentional "clear alias" path. Caller doesn't need to know.
@@ -365,10 +382,15 @@ export function App({
     // mode; subsequent keystrokes feed renameBuffer (see top of handler).
     // Pre-fills the buffer with the current alias so the user can edit
     // rather than just replace.
+    //
+    // v0.5.2: also capture the target session id so the commit on Enter
+    // writes to THIS session even if the selection auto-falls-back
+    // mid-typing (e.g. the watcher removes the selected session).
     if (input === 'n' && selectedId) {
       const state = visibleStates.find((s) => s.session.id === selectedId);
       if (state) {
         setRenameBuffer(state.alias ?? '');
+        setRenameTargetId(state.session.id);
         setRenameMode(true);
       }
       return;

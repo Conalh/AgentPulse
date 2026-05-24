@@ -40,6 +40,31 @@ import { fingerprintFinding } from 'agent-gov-core';
 
 const EXCEPTIONS_FILENAME = '.agentpulse-exceptions.json';
 
+/**
+ * v0.5.2: per-file write queue. Two near-concurrent `appendExceptions`
+ * calls used to race on the read-modify-write cycle — both would read
+ * the pre-existing file, both would write their own version, and the
+ * second's write would silently wipe the first's new entries. Now
+ * writes are serialized by the resolved file path. Keyed by path so
+ * sessions with different cwds don't share a queue.
+ */
+const writeQueues = new Map<string, Promise<void>>();
+
+function enqueueWrite(path: string, op: () => Promise<void>): Promise<void> {
+  const previous = writeQueues.get(path) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(op);
+  writeQueues.set(path, next);
+  // Cleanup uses `.then(onOk, onErr)` (vs `.finally`) so the cleanup
+  // branch is terminal — `.finally` would propagate the parent's
+  // rejection into a new unhandled chain. The caller's own `await next`
+  // already exposes any error.
+  const cleanup = (): void => {
+    if (writeQueues.get(path) === next) writeQueues.delete(path);
+  };
+  next.then(cleanup, cleanup);
+  return next;
+}
+
 interface ExceptionEntry {
   kind: string;
   fingerprint: string;
@@ -133,54 +158,58 @@ export async function appendExceptions(
   if (drifts.length === 0) return; // no-op, don't touch disk
   const path = resolveExceptionsPath(searchPath);
 
-  // Read existing entries (if any). A missing file is fine — we'll create.
-  // A present-but-unparseable file IS an error here, because writing on top
-  // would clobber user-edited content.
-  let existing: ExceptionsFile = { version: 1, exceptions: [] };
-  let raw: string | null = null;
-  try {
-    raw = await readFile(path, 'utf8');
-  } catch (err) {
-    // ENOENT is fine; any other read error propagates.
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== 'ENOENT') throw err;
-  }
-  if (raw !== null) {
-    const parsed = JSON.parse(raw) as unknown; // intentionally throws on bad JSON
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error(
-        `appendExceptions: existing ${EXCEPTIONS_FILENAME} is not a JSON object`
-      );
+  // v0.5.2: serialize against this path so concurrent calls don't
+  // overwrite each other's appended entries.
+  return enqueueWrite(path, async () => {
+    // Read existing entries (if any). A missing file is fine — we'll create.
+    // A present-but-unparseable file IS an error here, because writing on top
+    // would clobber user-edited content.
+    let existing: ExceptionsFile = { version: 1, exceptions: [] };
+    let raw: string | null = null;
+    try {
+      raw = await readFile(path, 'utf8');
+    } catch (err) {
+      // ENOENT is fine; any other read error propagates.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw err;
     }
-    const file = parsed as Partial<ExceptionsFile>;
-    existing = {
-      version: typeof file.version === 'number' ? file.version : 1,
-      exceptions: Array.isArray(file.exceptions) ? (file.exceptions as ExceptionEntry[]) : [],
-    };
-  }
+    if (raw !== null) {
+      const parsed = JSON.parse(raw) as unknown; // intentionally throws on bad JSON
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error(
+          `appendExceptions: existing ${EXCEPTIONS_FILENAME} is not a JSON object`
+        );
+      }
+      const file = parsed as Partial<ExceptionsFile>;
+      existing = {
+        version: typeof file.version === 'number' ? file.version : 1,
+        exceptions: Array.isArray(file.exceptions) ? (file.exceptions as ExceptionEntry[]) : [],
+      };
+    }
 
-  const seen = new Set<string>(
-    existing.exceptions
-      .map((e) => (e && typeof e.fingerprint === 'string' ? e.fingerprint : ''))
-      .filter((fp): fp is string => fp.length > 0)
-  );
+    const seen = new Set<string>(
+      existing.exceptions
+        .map((e) => (e && typeof e.fingerprint === 'string' ? e.fingerprint : ''))
+        .filter((fp): fp is string => fp.length > 0)
+    );
 
-  const approvedAt = new Date().toISOString();
-  for (const drift of drifts) {
-    const fp = drift.fingerprint ?? fingerprintFinding(drift);
-    if (!fp || seen.has(fp)) continue;
-    seen.add(fp);
-    existing.exceptions.push({
-      kind: drift.kind,
-      fingerprint: fp,
-      approvedAt,
-      note: 'approved by user via TUI',
-    });
-  }
+    const approvedAt = new Date().toISOString();
+    for (const drift of drifts) {
+      const fp = drift.fingerprint ?? fingerprintFinding(drift);
+      if (!fp || seen.has(fp)) continue;
+      seen.add(fp);
+      existing.exceptions.push({
+        kind: drift.kind,
+        fingerprint: fp,
+        approvedAt,
+        note: 'approved by user via TUI',
+      });
+    }
 
-  await writeFile(
-    path,
-    `${JSON.stringify(existing, null, 2)}\n`,
-    'utf8'
-  );
+    await writeFile(
+      path,
+      `${JSON.stringify(existing, null, 2)}\n`,
+      'utf8'
+    );
+  });
 }
