@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.5.6] — 2026-05-23
+
+### Added — mtime-keyed JSON file cache (Gemini #4)
+
+`loadAliases` and `loadExceptions` are called on every pulse — with 10 sessions on a 30 s refresh, that's 20+ small JSON file reads per cycle, most returning identical content. v0.5.6 wraps both behind a shared process-wide cache that compares mtime before re-reading.
+
+- **New `src/jsonCache.ts`** exports `readJsonCached(path, parse, whenMissing)` and `invalidateJsonCache(path)`. On every call: `stat` the file, compare mtime against cached value; mtime match → return cached parse output, mismatch (or ENOENT vs. present) → re-read + reparse + cache.
+- **`aliases.ts:readAliasFile`** + **`exceptions.ts:loadExceptions`** now route through it. Same observable behaviour, fewer disk reads.
+- **`setAlias` and `appendExceptions` invalidate the cache** after a successful write so the next read picks up the new content even if mtime resolution lags (Windows + some network filesystems can be ~1 s late).
+- Failure modes (parse error, read error) are cached as `null` with an mtime sentinel of `0` — so a permanently-broken file doesn't get reparsed every pulse, but a fixed file is detected on the next mtime change.
+- Most visible on Windows where small-file stat+read latency adds up. On a 10-session refresh, this is roughly a 20× reduction in alias/exception disk operations per cycle.
+
+### Added — dev-only per-layer profiling (Gemini #10)
+
+Set `AGENTPULSE_PROFILE=1` in the environment to log per-layer pulse timings to stderr:
+
+```
+[agentpulse:profile] parse: 142.3ms · enrich: 3.1ms · sequence: 0.4ms · exceptions: 0.2ms · classify: 1.1ms · narrative: 0.1ms
+```
+
+- Off by default — one env-var read per pulse, zero allocation in the hot path. Reads dynamically (not at module-load) so tests can toggle freely.
+- Goes to stderr because stdout is in the TUI's alt-screen buffer during `agentpulse live` — any write to stdout there causes whole-window flicker on cmd.exe.
+- Pairs naturally with the incremental-parse work coming in v0.6.0+: the per-layer numbers tell you immediately whether `parse:` actually dropped after a refactor.
+
+### Tests
+
+194 (was 183). Eleven new tests across two new files:
+
+- `jsonCache.test.mjs` (9 tests): missing-file → fallback, valid-file → parsed, parser-not-re-invoked-on-cache-hit, mtime-change-forces-reread, malformed-JSON → fallback + cached as missing, missing-then-appearing detected, `invalidate()` forces re-read, `clear()` drops everything.
+- `cli.test.mjs` (2 tests): `AGENTPULSE_PROFILE=1` produces the expected stderr line shape AND stdout JSON stays valid; absence of the env var produces no profile line.
+
+### Bumped
+
+- Action ref in `README.md` + `examples/agentpulse-pr-check.yml`: `@v0.5.5` → `@v0.5.6`.
+
 ## [0.5.5] — 2026-05-23
 
 ### CI speedup batch

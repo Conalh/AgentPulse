@@ -38,6 +38,8 @@ import { join } from 'node:path';
 import type { Finding } from 'agent-gov-core';
 import { fingerprintFinding } from 'agent-gov-core';
 
+import { invalidateJsonCache, readJsonCached } from './jsonCache.js';
+
 const EXCEPTIONS_FILENAME = '.agentpulse-exceptions.json';
 
 /**
@@ -99,21 +101,13 @@ function resolveExceptionsPath(searchPath: string): string {
  *
  * All failure modes are silent by design — see file header.
  */
-export async function loadExceptions(searchPath?: string): Promise<Set<string>> {
-  if (!searchPath) return new Set();
-  const path = resolveExceptionsPath(searchPath);
-  let raw: string;
-  try {
-    raw = await readFile(path, 'utf8');
-  } catch {
-    return new Set();
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return new Set();
-  }
+/**
+ * v0.5.6: parse goes through the mtime-keyed jsonCache so successive
+ * pulse() invocations on the same session don't re-read+reparse the
+ * same `.agentpulse-exceptions.json` on each refresh.
+ */
+function parseExceptionsFile(raw: string): Set<string> {
+  const parsed = JSON.parse(raw) as unknown;
   if (!parsed || typeof parsed !== 'object') return new Set();
   const file = parsed as Partial<ExceptionsFile>;
   if (!Array.isArray(file.exceptions)) return new Set();
@@ -129,6 +123,12 @@ export async function loadExceptions(searchPath?: string): Promise<Set<string>> 
     }
   }
   return out;
+}
+
+export async function loadExceptions(searchPath?: string): Promise<Set<string>> {
+  if (!searchPath) return new Set();
+  const path = resolveExceptionsPath(searchPath);
+  return readJsonCached(path, parseExceptionsFile, () => new Set<string>());
 }
 
 /**
@@ -211,5 +211,10 @@ export async function appendExceptions(
       `${JSON.stringify(existing, null, 2)}\n`,
       'utf8'
     );
+    // v0.5.6: invalidate the jsonCache entry so the next loadExceptions
+    // read picks up the appended entries immediately — important for
+    // the `a`-key flow where the user expects the verdict to clear on
+    // the next refresh, not after mtime resolution catches up.
+    invalidateJsonCache(path);
   });
 }

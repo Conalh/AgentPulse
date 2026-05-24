@@ -39,6 +39,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { invalidateJsonCache, readJsonCached } from './jsonCache.js';
+
 const ALIAS_FILENAME = '.agentpulse-aliases.json';
 const HOME_ALIAS_DIR = '.agentpulse';
 const HOME_ALIAS_FILENAME = 'aliases.json';
@@ -69,19 +71,13 @@ export function homeAliasPath(home?: string): string {
   return join(base, HOME_ALIAS_DIR, HOME_ALIAS_FILENAME);
 }
 
-async function readAliasFile(path: string): Promise<Record<string, string>> {
-  let raw: string;
-  try {
-    raw = await readFile(path, 'utf8');
-  } catch {
-    return {};
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return {};
-  }
+/**
+ * v0.5.6: read+parse goes through the mtime-keyed jsonCache so the
+ * orchestrator's per-pulse `loadAliases` call across N sessions doesn't
+ * re-parse the same `~/.agentpulse/aliases.json` N times per cycle.
+ */
+function parseAliasFile(raw: string): Record<string, string> {
+  const parsed = JSON.parse(raw) as unknown;
   if (!parsed || typeof parsed !== 'object') return {};
   const file = parsed as Partial<AliasFile>;
   if (!file.aliases || typeof file.aliases !== 'object') return {};
@@ -92,6 +88,10 @@ async function readAliasFile(path: string): Promise<Record<string, string>> {
     }
   }
   return out;
+}
+
+async function readAliasFile(path: string): Promise<Record<string, string>> {
+  return readJsonCached(path, parseAliasFile, () => ({}));
 }
 
 export interface LoadAliasesOptions {
@@ -223,5 +223,9 @@ export async function setAlias(
     }
 
     await writeFile(path, `${JSON.stringify(existing, null, 2)}\n`, 'utf8');
+    // v0.5.6: invalidate the jsonCache so the next loadAliases() picks
+    // up the new content even if mtime resolution lags (Windows / some
+    // network filesystems).
+    invalidateJsonCache(path);
   });
 }

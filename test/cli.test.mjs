@@ -110,3 +110,44 @@ test('CLI: valid args run the full pipeline against an empty transcript dir', ()
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('CLI: AGENTPULSE_PROFILE=1 writes a per-layer timing line to stderr (v0.5.6)', () => {
+  // Profile output goes to stderr so it doesn't interfere with --format
+  // text/json on stdout, and so the TUI's alt-screen-buffer stdout
+  // path doesn't get polluted in live mode.
+  const tmp = mkdtempSync(resolve(tmpdir(), 'agentpulse-cli-profile-'));
+  try {
+    const r = runCli(
+      ['recap', '--transcript-dir', tmp, '--format', 'json', '--no-detectors'],
+      { env: { ...process.env, AGENTPULSE_PROFILE: '1' } }
+    );
+    assert.equal(r.status, 0, `expected exit 0, got ${r.status}; stderr: ${r.stderr}`);
+    // The profile line lands on stderr; stdout is the JSON recap, untouched.
+    assert.match(
+      r.stderr,
+      /\[agentpulse:profile\] parse: \d+\.\d+ms · enrich: \d+\.\d+ms · sequence: \d+\.\d+ms · exceptions: \d+\.\d+ms · classify: \d+\.\d+ms · narrative: \d+\.\d+ms/,
+      'expected one profile line per pulse on stderr'
+    );
+    // And stdout is still valid JSON, untouched.
+    const recap = JSON.parse(r.stdout);
+    assert.ok(recap.verdict);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('CLI: profile mode is off when AGENTPULSE_PROFILE is unset (no overhead in normal use)', () => {
+  // Sanity: when the env var is absent, no profile line appears on stderr.
+  const tmp = mkdtempSync(resolve(tmpdir(), 'agentpulse-cli-noprofile-'));
+  try {
+    const r = runCli(['recap', '--transcript-dir', tmp, '--format', 'json', '--no-detectors']);
+    assert.equal(r.status, 0);
+    assert.doesNotMatch(
+      r.stderr,
+      /\[agentpulse:profile\]/,
+      'profile line should NOT appear when env var is unset',
+    );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
