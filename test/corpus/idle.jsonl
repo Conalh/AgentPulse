@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2026-05-23T10:00:00.000Z","cwd":"/repo","sessionId":"corpus-idle","message":{"role":"user","content":[{"type":"text","text":"clean up imports in the utils dir"}]}}
+{"type":"assistant","timestamp":"2026-05-23T10:00:30.000Z","cwd":"/repo","sessionId":"corpus-idle","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_e1","name":"Edit","input":{"file_path":"/repo/src/utils/imports.ts"}}]}}
+{"type":"assistant","timestamp":"2026-05-23T10:01:00.000Z","cwd":"/repo","sessionId":"corpus-idle","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_e2","name":"Edit","input":{"file_path":"/repo/src/utils/helpers.ts"}}]}}
+{"type":"assistant","timestamp":"2026-05-23T10:02:00.000Z","cwd":"/repo","sessionId":"corpus-idle","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_e3","name":"Edit","input":{"file_path":"/repo/src/utils/index.ts"}}]}}

@@ -151,7 +151,7 @@ Two ways to gate a pipeline on agent state:
 ### GitHub Action (v0.4.2+)
 
 ```yaml
-- uses: Conalh/AgentPulse@v0.6.0
+- uses: Conalh/AgentPulse@v0.6.1
   with:
     transcript-dirs: agentpulse-transcripts
     strict: 'true'

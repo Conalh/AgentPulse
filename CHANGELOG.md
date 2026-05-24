@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.6.1] — 2026-05-23
+
+The "regression armor" batch — property tests (Gemini #9) + golden replay corpus (Gemini #3). Both items closed the inspection backlog. **Both invisible to users; both immediately earned their keep.**
+
+### Added — golden replay corpus (Gemini #3)
+
+`test/corpus/` is a small, labelled collection of representative transcript JSONLs paired with the bucket each must classify into. `test/corpus.test.mjs` reads `manifest.json`, runs the full `pulse()` pipeline against each fixture, and asserts the verdict. Six scenarios cover the six trajectory buckets — converging, stuck, exploring, done, drifting (shell_exfil), idle.
+
+Adding a scenario: drop `<name>.jsonl` into `test/corpus/`, add a manifest entry with `{ file, endAt, windowMs, expectedBucket, minConfidence, expectedDriftCount }`, run `npm test`. New scenarios pick up automatically.
+
+### Fixed — verification trend was silently `no_data` for ALL real parsed transcripts
+
+The corpus surfaced this on its first run. `computeVerificationTrend` in `src/trajectory.ts` looked for `toolResultExitCode` on the `tool_use` event — the synthetic test fixture shape. But the real parser emits `tool_use` and `tool_result` as SEPARATE `TranscriptEvent` objects linked by `toolUseId`; exit codes live on the `tool_result`. So every real Claude Code / Cursor / Codex transcript yielded `verificationTrend === 'no_data'`, which meant **the `converging` bucket effectively never fired in production** — only in synthetic tests.
+
+- Fix: `computeVerificationTrend` now builds a `toolUseId → tool_result` map up front and falls back to the linked `tool_result` when the `tool_use` itself has no exit code. Backward-compatible — the synthetic shape (exit code on the tool_use) still works.
+- The corpus catches the symptom: `converging.jsonl` has a fail→pass test sequence and asserts the bucket is `converging` with confidence ≥ 0.6. Pre-fix that asserted, post-fix it passes.
+
+This is the single biggest classifier-quality fix since v0.3.5. **Anyone running v0.5.x against a real session was getting a downgraded verdict** (likely `exploring` or `idle` instead of `converging`) anytime the agent did TDD-shaped work. v0.6.1 restores the intended behaviour.
+
+### Added — property tests on the pure-core layers (Gemini #9)
+
+`test/property.test.mjs` runs randomized-input fuzz loops (200 iterations each) over the pure-function surfaces and asserts invariants that must hold for ANY input:
+
+- `classifyTrajectory`: confidence always in [0, 1], bucket always one of the six known values, deterministic (same inputs → same verdict), drifts array only non-empty on `drifting`
+- `sparkline`: output length always equals requested width, empty-input fallback respected
+- `parseDuration`: linearity (`N * parseDuration('1m') === parseDuration('Nm')`), malformed inputs reject without throwing
+- `applyHysteresis`: input state never mutated, stable bucket only flips after two consecutive agreements
+- `analyzeSequences`: pattern always in the known set, confidence in [0, 1]
+- `readOutcomeSignal`: `idleGapMs` never negative
+
+Hand-rolled `Math.random()` generator + seeded PRNG (set `AGENTPULSE_PROPERTY_SEED=<n>` to replay a specific run). Zero deps — fast-check would be a single-purpose addition and these invariants are simple enough.
+
+### Fixed — CLI module side-effected on import
+
+`src/cli.ts` called `main()` unconditionally at module load. Importing `parseDuration` from it (which the property tests needed) ran the CLI's main function, printed usage, and exited — breaking any consumer that wanted to use the file as a library. Guarded `main()` with the standard ESM idiom (`process.argv[1] === fileURLToPath(import.meta.url)`).
+
+### Tests
+
+222 (was 204). Eighteen new tests:
+- 12 property tests covering invariants across `trajectory`, `sequences`, `sparkline`, `cli` (`parseDuration`), `hysteresis`, `outcome`
+- 6 corpus scenarios (one per bucket) running end-to-end through the full pipeline
+
+### Bumped
+
+- Action ref in `README.md` + `examples/agentpulse-pr-check.yml`: `@v0.6.0` → `@v0.6.1`.
+
 ## [0.6.0] — 2026-05-23
 
 ### Added — incremental transcript parsing (Gemini #1)

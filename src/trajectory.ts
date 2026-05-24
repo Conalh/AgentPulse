@@ -142,10 +142,32 @@ function verificationOutcome(ev: TranscriptEvent): 'pass' | 'fail' | null {
 
 function computeVerificationTrend(events: TranscriptEvent[]): VerificationTrend {
   const sorted = [...events].sort((a, b) => a.timestamp - b.timestamp);
+
+  // v0.6.1: build a lookup of tool_result events by their toolUseId so we
+  // can find exit codes on real parsed transcripts. The parser emits
+  // tool_use and tool_result as SEPARATE TranscriptEvents; exit codes
+  // live on the tool_result. Pre-fix, computeVerificationTrend only
+  // looked at the tool_use event itself, so the synthetic test shape
+  // (exit code attached directly to the tool_use) worked, but every
+  // real Claude Code / Cursor / Codex transcript yielded `no_data` for
+  // the verification trend — silently. Caught by the v0.6.1 corpus.
+  const resultByToolUseId = new Map<string, TranscriptEvent>();
+  for (const ev of events) {
+    if (ev.kind === 'tool_result' && ev.toolUseId) {
+      resultByToolUseId.set(ev.toolUseId, ev);
+    }
+  }
+
   const outcomes: ('pass' | 'fail')[] = [];
   for (const ev of sorted) {
     if (!isVerificationEvent(ev)) continue;
-    const o = verificationOutcome(ev);
+    // First: synthetic shape (exit code on the tool_use itself).
+    // Fallback: real shape (exit code on the linked tool_result).
+    let o = verificationOutcome(ev);
+    if (o === null && ev.toolUseId) {
+      const linked = resultByToolUseId.get(ev.toolUseId);
+      if (linked) o = verificationOutcome(linked);
+    }
     if (o) outcomes.push(o);
   }
   if (outcomes.length === 0) return 'no_data';

@@ -1,0 +1,59 @@
+{
+  "_doc": "Golden replay corpus (v0.6.1). Each entry pairs a transcript fixture with the verdict the pipeline must produce when pulse() runs against it. The harness in corpus.test.mjs enforces these labels — any future change to enrich / sequences / trajectory / narrative that flips a bucket here is caught immediately. To add a scenario: drop a JSONL into this directory, add a manifest entry, and let CI fail until the implementation matches the label.",
+  "scenarios": [
+    {
+      "file": "converging.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Multiple edits to one file under src/auth, verifications go fail→pass (improving trend), user affirms ('perfect, thanks'). Textbook converging."
+    },
+    {
+      "file": "stuck.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "stuck",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Same file edited three times, npm test fails each time, user pushes back with 'still broken, try again'. Stuck_loop on src/auth/login.ts."
+    },
+    {
+      "file": "exploring.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "exploring",
+      "minConfidence": 0.3,
+      "expectedDriftCount": 0,
+      "rationale": "Glob + 4 Reads + Grep, zero edits. Classic exploration shape — agent is orienting itself."
+    },
+    {
+      "file": "done.jsonl",
+      "endAt": "2026-05-23T10:18:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "done",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Edit + passing test + 'Done — fixed' completion verb, then >15min idle gap to windowEnd. Done bucket entry conditions."
+    },
+    {
+      "file": "drifting-shell-exfil.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "drifting",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 1,
+      "rationale": "curl|sh — the shell_exfil drift detector must fire and flip the bucket regardless of other signals."
+    },
+    {
+      "file": "idle.jsonl",
+      "endAt": "2026-05-23T10:20:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "idle",
+      "minConfidence": 0.3,
+      "expectedDriftCount": 0,
+      "rationale": "Three edits between T0+30s and T0+2min, then nothing. windowEnd is T0+20min, so last event was ~18min ago — well past the 5min idle threshold."
+    }
+  ]
+}

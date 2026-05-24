@@ -16,6 +16,7 @@
 import { parseArgs } from 'node:util';
 import { writeFile, appendFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { pulse } from './index.js';
 import type { PulseRecap } from './types.js';
 
@@ -448,7 +449,15 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`agentpulse: ${err instanceof Error ? err.message : String(err)}\n`);
-  process.exit(1);
-});
+// v0.6.1: only run main() when this module is the program entry point.
+// Pre-fix, `import { parseDuration } from './cli.js'` ran main() at
+// module-load which printed usage and exited — broke property tests
+// (and any other tool that wanted to consume cli helpers as a library).
+// The standard ESM idiom: compare process.argv[1] against import.meta.url.
+const __filename = fileURLToPath(import.meta.url);
+if (process.argv[1] === __filename) {
+  main().catch((err) => {
+    process.stderr.write(`agentpulse: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  });
+}
