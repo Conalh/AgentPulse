@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AgentPulse dashboard, v0.6.1 — README hero image.
+
+  Static SVG mockup of `npx @conalh/agentpulse@latest live` showing every
+  feature shipped in the v0.4.x–v0.6.1 arc:
+
+    - Project clustering (v0.4.5): same-project sessions adjacent
+    - Agent aliases (v0.4.7): `CC1`, `CC2`, `frontend` lead the row
+    - Hex-tail disambiguator (v0.4.4): unaliased same-project rows
+    - Verdict hysteresis (v0.5.4): pill colour is the consensus
+    - Path-truncated narrative (v0.5.3, v0.6.1): `…/auth/session.ts`
+    - Converging classifier fix (v0.6.1): real TDD now reads as converging
+    - The footer's RAGE mark and the full keybind hint bar
+
+  Hand-laid at monospace 13px, ~7.8px char width, 18px line height.
+  Render with any SVG viewer / GitHub README image embed.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1100 640"
+     width="1100" height="640"
+     font-family="'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace"
+     font-size="13">
+
+  <!-- Background. Tokyo Night–ish dark, kind to the pill colours. -->
+  <rect x="0" y="0" width="1100" height="640" fill="#1a1b26"/>
+
+  <!-- ────────────────────────────────────────────────────────────── -->
+  <!-- Header box: brand + session count                                -->
+  <!-- ────────────────────────────────────────────────────────────── -->
+  <rect x="12" y="12" width="1076" height="36"
+        rx="8" ry="8"
+        fill="none" stroke="#7dcfff" stroke-width="1"/>
+  <text x="28" y="34" fill="#c0caf5">
+    <tspan font-weight="700">AgentPulse</tspan><tspan fill="#565f89"> · by </tspan><tspan font-weight="700" fill="#f7768e">RAGE</tspan>
+  </text>
+  <text x="1072" y="34" fill="#565f89" text-anchor="end">7 sessions, refresh 30s</text>
+
+  <!-- ────────────────────────────────────────────────────────────── -->
+  <!-- Session list                                                     -->
+  <!-- ────────────────────────────────────────────────────────────── -->
+  <rect x="12" y="56" width="1076" height="146"
+        rx="8" ry="8"
+        fill="none" stroke="#414868" stroke-width="1"/>
+
+  <!-- Row 1: selected — converging, aliased CC1 (the hysteresis-confirmed pill) -->
+  <text x="28" y="80">
+    <tspan fill="#7dcfff" font-weight="700">▸ </tspan>
+    <tspan fill="#9ece6a">●</tspan>
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#7dcfff" font-weight="700">CC1</tspan>
+    <tspan fill="#565f89"> · </tspan>
+    <tspan fill="#c0caf5" font-weight="700">AgentPulse</tspan>
+    <tspan fill="#565f89"> (claude-code)</tspan>
+  </text>
+  <text x="640" y="80" fill="#9ece6a">converging</text>
+  <text x="1072" y="80" fill="#565f89" text-anchor="end">updated 6s ago</text>
+
+  <!-- Row 2: aliased CC2, also converging — note hex tail is suppressed
+       because the alias IS the disambiguator (v0.4.7) -->
+  <text x="28" y="98">
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#9ece6a">●</tspan>
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#7dcfff">CC2</tspan>
+    <tspan fill="#565f89"> · </tspan>
+    <tspan fill="#c0caf5">AgentPulse</tspan>
+    <tspan fill="#565f89"> (claude-code)</tspan>
+  </text>
+  <text x="640" y="98" fill="#9ece6a">converging</text>
+  <text x="1072" y="98" fill="#565f89" text-anchor="end">updated 12s ago</text>
+
+  <!-- Row 3: AgentPulse (codex) — third runtime on the same project, clustered together -->
+  <text x="28" y="116">
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#565f89">◐</tspan>
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#c0caf5">AgentPulse</tspan>
+    <tspan fill="#565f89"> (codex)</tspan>
+  </text>
+  <text x="640" y="116" fill="#565f89">exploring</text>
+  <text x="1072" y="116" fill="#565f89" text-anchor="end">updated 18s ago</text>
+
+  <!-- Row 4: ontology cluster — frontend alias + stuck pill -->
+  <text x="28" y="134">
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#e0af68">▲</tspan>
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#7dcfff">frontend</tspan>
+    <tspan fill="#565f89"> · </tspan>
+    <tspan fill="#c0caf5">ontology</tspan>
+    <tspan fill="#565f89"> (cursor)</tspan>
+  </text>
+  <text x="640" y="134" fill="#e0af68">stuck</text>
+  <text x="1072" y="134" fill="#565f89" text-anchor="end">updated 22s ago</text>
+
+  <!-- Row 5: ontology (claude-code) — second runtime on same project, idle -->
+  <text x="28" y="152">
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#6b7089">○</tspan>
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#c0caf5">ontology</tspan>
+    <tspan fill="#565f89"> (claude-code)</tspan>
+  </text>
+  <text x="640" y="152" fill="#6b7089">idle</text>
+  <text x="1072" y="152" fill="#565f89" text-anchor="end">updated 4 min ago</text>
+
+  <!-- Row 6: core (claude-code) — done -->
+  <text x="28" y="170">
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#7aa2f7">■</tspan>
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#c0caf5">core</tspan>
+    <tspan fill="#565f89"> (claude-code)</tspan>
+  </text>
+  <text x="640" y="170" fill="#7aa2f7">done</text>
+  <text x="1072" y="170" fill="#565f89" text-anchor="end">updated 8 min ago</text>
+
+  <!-- Row 7: agent-gov-core — idle, no alias, unique label so no tail -->
+  <text x="28" y="188">
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#6b7089">○</tspan>
+    <tspan fill="#c0caf5">  </tspan>
+    <tspan fill="#c0caf5">agent-gov-core</tspan>
+    <tspan fill="#565f89"> (claude-code)</tspan>
+  </text>
+  <text x="640" y="188" fill="#6b7089">idle</text>
+  <text x="1072" y="188" fill="#565f89" text-anchor="end">updated 12 min ago</text>
+
+  <!-- ────────────────────────────────────────────────────────────── -->
+  <!-- Detail pane: selected session                                    -->
+  <!-- ────────────────────────────────────────────────────────────── -->
+  <rect x="12" y="210" width="1076" height="370"
+        rx="8" ry="8"
+        fill="none" stroke="#414868" stroke-width="1"/>
+
+  <!-- Project header + alias -->
+  <text x="28" y="234">
+    <tspan font-weight="700" fill="#7dcfff">CC1 · </tspan>
+    <tspan font-weight="700" fill="#c0caf5">AgentPulse</tspan>
+    <tspan fill="#565f89"> (claude-code)</tspan>
+  </text>
+
+  <!-- Transcript path -->
+  <text x="28" y="252" fill="#565f89" font-size="12">
+    C:\Users\conno\.claude\projects\C--\5e9d65b1-9164-4d07-bb35-150ea00afbff.jsonl
+  </text>
+
+  <!-- Narrative — converging template, post-v0.6.1 fix where real
+       transcripts actually classify as converging when TDD shape fires -->
+  <text x="28" y="282" fill="#c0caf5">
+    Your agent has been working on
+    <tspan font-weight="700">session</tspan> for
+    <tspan font-weight="700">14 minutes</tspan>. It focused on
+    <tspan font-weight="700" font-family="'Cascadia Code', monospace" fill="#a9b1d6">`src/auth`</tspan>, made
+  </text>
+  <text x="28" y="300" fill="#c0caf5">
+    <tspan font-weight="700">4</tspan> changes to
+    <tspan font-weight="700" fill="#a9b1d6">`…/auth/session.ts`</tspan>, and ran the tests after each change.
+  </text>
+  <text x="28" y="318" fill="#c0caf5">
+    Tests went from failing to passing. Looks like it solved it.
+  </text>
+  <text x="28" y="336" fill="#c0caf5">
+    It ran tests after each change in a tight loop.
+  </text>
+
+  <!-- Verdict line -->
+  <text x="28" y="368">
+    <tspan fill="#c0caf5">Verdict: </tspan>
+    <tspan fill="#9ece6a" font-weight="700">● converging</tspan>
+    <tspan fill="#565f89"> (confidence 0.85)</tspan>
+  </text>
+
+  <!-- Signals -->
+  <text x="28" y="398" fill="#c0caf5">Signals:</text>
+  <text x="28" y="416" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> top cluster <tspan fill="#a9b1d6">src/auth</tspan> covers 86% of activity</text>
+  <text x="28" y="434" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> tests recovered to green (2 edit→verify cycles)</text>
+  <text x="28" y="452" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> 4 edits across 1 file</text>
+
+  <!-- Activity sparkline -->
+  <text x="28" y="488">
+    <tspan fill="#c0caf5">Activity: </tspan>
+    <tspan fill="#9ece6a">▁▂▃▅▆▇█</tspan>
+    <tspan fill="#7aa2f7">▆▅▄</tspan>
+    <tspan fill="#9ece6a">▅▆▇█</tspan>
+    <tspan fill="#7aa2f7">▆▄▃▂</tspan>
+    <tspan fill="#565f89">  (84 events over 14 min)</tspan>
+  </text>
+
+  <!-- Footer timing -->
+  <text x="28" y="538" fill="#565f89">Last refresh: 6s ago · next refresh: ~24s</text>
+
+  <!-- ────────────────────────────────────────────────────────────── -->
+  <!-- Keyboard hint bar                                                -->
+  <!-- ────────────────────────────────────────────────────────────── -->
+  <text x="28" y="610" fill="#565f89">
+    ↑↓ / WS select · r refresh · a whitelist · n rename · ? help · q quit
+  </text>
+  <text x="1072" y="610" text-anchor="end">
+    <tspan fill="#565f89">▲</tspan><tspan fill="#f7768e" font-weight="700">RAGE</tspan>
+  </text>
+</svg>

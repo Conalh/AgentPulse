@@ -4,6 +4,8 @@
 
 **Live trajectory verdict for AI coding agent sessions. Local-only. No LLM.**
 
+![AgentPulse dashboard — seven sessions, one selected and reading converging](./assets/dashboard.svg)
+
 AgentPulse watches your Claude Code, Cursor, and Codex transcript files and classifies what each agent is doing right now — `converging`, `exploring`, `stuck`, `done`, `drifting`, or `idle` — in a two-pane terminal dashboard. Deterministic templating over local signal. No outbound network calls, no language model, no cloud.
 
 ```sh
