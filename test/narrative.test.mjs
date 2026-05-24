@@ -54,6 +54,40 @@ function verdictFixture(overrides = {}) {
   };
 }
 
+test('idle narrative with long file path renders single-line (v0.5.3 path truncation)', () => {
+  // Pre-v0.5.3, a long primary-file path like
+  // `C:\Dev\fit-ontology\web\app\clients\page.tsx` rendered untruncated
+  // in the narrative, pushed past a typical terminal column width, and
+  // wrapped onto a second line — the NARRATIVE_MIN_HEIGHT pad from
+  // v0.3.5 was the only thing keeping the layout from jerking. v0.5.3
+  // adds shortenPath so the narrative compresses to `…/clients/page.tsx`.
+  const enriched = enrichedFixture({
+    actionCounts: { exploration: 0, editing: 12, verification: 0, external: 0, navigation: 0, other: 0 },
+    primaryFiles: ['C:/Users/conno/Dev/fit-ontology/web/app/clients/dashboard/page.tsx'],
+    pathClusters: { 'C:/Users/conno/Dev/fit-ontology/web/app/clients/dashboard': 12 },
+    events: [
+      { timestamp: T0, runtime: 'claude-code', kind: 'tool_use' },
+    ],
+  });
+  const outcome = outcomeFixture({
+    verificationTrend: 'no_data',
+    userToneTrend: 'idle',
+    idleGapMs: 12 * 60_000,
+  });
+  const verdict = verdictFixture({ bucket: 'idle', confidence: 0.7 });
+  const recap = renderRecap(enriched, outcome, verdict);
+
+  // The full original path must NOT appear — it was 65+ chars and would
+  // wrap a typical terminal column.
+  assert.doesNotMatch(
+    recap.narrative,
+    /C:\/Users\/conno\/Dev\/fit-ontology\/web\/app\/clients\/dashboard\/page\.tsx/,
+  );
+  // The shortened form (with `…/`) AND the basename must.
+  assert.match(recap.narrative, /…\//, 'should include the ellipsis marker');
+  assert.match(recap.narrative, /page\.tsx/, 'should preserve the basename');
+});
+
 test('humanDuration: seconds for sub-minute', () => {
   assert.equal(humanDuration(15_000), '15 seconds');
   assert.equal(humanDuration(1_000), '1 second');

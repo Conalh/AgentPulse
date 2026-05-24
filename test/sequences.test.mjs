@@ -142,6 +142,30 @@ test('analyzeSequences: refuse_to_verify fires on ≥4 edits with 0 verification
   assert.ok(sig.confidence >= 0.6);
 });
 
+test('analyzeSequences: stuck_loop tolerates interleaved reads between edit and verify (v0.5.3)', () => {
+  // Real agents do exploration BETWEEN iterations: edit a file, read 3
+  // others to figure out what's wrong, then run tests. Pre-fix the
+  // 3-position look-ahead window would miss the verify event because
+  // 3 Read events filled the slots first. v0.5.3 skips exploration
+  // events when looking for the next verification, so the cycle is
+  // detected correctly.
+  const events = [
+    toolUse(FRESH + 1000, 'Edit', { file_path: 'src/auth.ts' }),
+    toolUse(FRESH + 1500, 'Read', { file_path: 'src/auth.test.ts' }),
+    toolUse(FRESH + 2000, 'Read', { file_path: 'src/auth.types.ts' }),
+    toolUse(FRESH + 2500, 'Read', { file_path: 'src/session.ts' }),
+    bashEvent(FRESH + 3000, 'npm test', { exitCode: 1, resultText: 'FAIL auth.test.ts' }),
+    toolUse(FRESH + 4000, 'Edit', { file_path: 'src/auth.ts' }),
+    toolUse(FRESH + 4500, 'Grep', { pattern: 'login' }),
+    toolUse(FRESH + 5000, 'Glob', { pattern: '**/*.test.ts' }),
+    bashEvent(FRESH + 5500, 'npm test', { exitCode: 1, resultText: 'FAIL auth.test.ts' }),
+  ];
+  const sig = analyzeSequences(events);
+  assert.equal(sig.pattern, 'stuck_loop');
+  assert.equal(sig.primaryFile, 'src/auth.ts');
+  assert.equal(sig.cycleCount, 2);
+});
+
 test('analyzeSequences: stuck_loop fires on same-file edit→fail cycles', () => {
   // Same file edited twice, each time followed by a failing test.
   const events = [

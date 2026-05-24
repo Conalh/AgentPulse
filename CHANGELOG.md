@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.5.3] — 2026-05-23
+
+Six "render calm + correctness" fixes from the external Gemini + Cursor inspections. No new flags, no new public API — the dashboard just feels calmer, more responsive, and more correct.
+
+### Fixed — sequence look-ahead missed real-world TDD loops (Cursor #1)
+
+`countEditVerifyCycles` and `detectStuckLoop` looked ahead exactly 3 array positions for the next verification event after each edit. Real agents do exploration *between* iterations — `Edit(foo.ts) → Read(bar.ts) → Read(baz.ts) → Read(qux.ts) → Bash(npm test)` is a single TDD/stuck cycle, but pre-fix the verification fell past the 3-event window and the cycle was silently lost.
+
+- Both helpers now skip over exploration events (`Read` / `Glob` / `Grep` / `LS`) without counting them toward the look-ahead budget. The budget still caps at 3 *non-exploration* events, so unrelated stretches of editing still cut off the search.
+- New `findNextVerificationIdx(seq, startIdx, maxNonExplorationLookahead)` helper shared between both detectors.
+
+### Fixed — `detectDrifts` re-normalized repoRoot per Write event (Cursor #2)
+
+`isOutsideRepoRoot(filePath, repoRoot)` did `s.replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase()` on **both** arguments. The file path varies per event, but the repoRoot doesn't — it was being normalized N times for N Write events in the window.
+
+- Split into `normalizePath(s)` + `isPathOutsideNormalizedRoot(filePath, normalizedRoot)`. `detectDrifts` now normalizes `repoRoot` exactly once at the top and reuses the pre-normalized string. Hot path on long windows.
+
+### Added — vim-style wrap-around navigation (Cursor #3)
+
+Pressing Up at the first row, or Down at the last row, used to be a no-op — the cursor sat against the edge. v0.5.3 wraps: Up at top jumps to bottom, Down at bottom jumps to top. Matches the convention everyone reaches for in terminal-only list nav.
+
+### Fixed — Ink re-render thrash from the 1-second clock (Cursor #4)
+
+Pre-v0.5.3 the App component held a `now` state that ticked every 1000 ms and was passed down as a prop to `SessionList` + `SessionDetail`. Because every "Xs ago" label needed `now`, the **entire Ink tree** re-diffed every second — visibly on cmd.exe, measurably on slower terminals.
+
+- New `<TimeAgo timestamp prefix dim />` (`src/tui/TimeAgo.tsx`) is a self-clocking cell. It owns its own `setInterval` (unref'd so it doesn't keep the process alive) and renders just one label.
+- `SessionList` no longer takes `now`. Each row's "updated Xs ago" cell is a `<TimeAgo>`. The pane itself is wrapped in `React.memo` so it only re-renders when sessions/selection actually change.
+- `SessionDetail` similarly drops `now`. The footer (`Last refresh: … · next refresh: …`) is extracted into a self-clocking `<RefreshFooter>` subcomponent. Memoized.
+- `App` still holds `now` for the whitelist-preview countdown banner, but the children no longer subscribe to it — so the App's 1 s tick rebuilds just the small footer banner, not the whole tree.
+
+### Fixed — merged dual debounce in App (Gemini #7)
+
+Two separate `useEffect`s each ran a 100 ms debounce — one for orchestrator events, one for watcher events. When a file change fired both within the same window (common during active coding), the dashboard did two `setStates` calls 100 ms apart and Ink did two diffs.
+
+- One shared scheduler now. Both event sources call into the same `scheduleFlush()` closure; bursts from either side coalesce into a single flush.
+
+### Fixed — long absolute paths wrapped in narratives (Gemini #8)
+
+Narratives like "Earlier in the window it made 12 changes to `C:\Users\conno\Dev\fit-ontology\web\app\clients\dashboard\page.tsx` before going idle" wrapped onto two lines in a normal-width terminal — the v0.3.5 `NARRATIVE_MIN_HEIGHT` pad was the only thing keeping the detail box stable.
+
+- New `shortenPath(path, maxLen=50)` middle-ellipsises paths over the threshold: keeps as many trailing segments as fit under `maxLen` with a leading `…/` marker, always preserves the basename.
+- Wired into every `primaryFile` use site in `src/narrative.ts`. Same information, less wrap.
+
+### Tests
+
+168 (was 166). Two new regression tests:
+
+- `analyzeSequences: stuck_loop tolerates interleaved reads between edit and verify` — constructs the exact failure shape (edit → 3 reads → fail verify) twice and asserts `stuck_loop` fires with `cycleCount: 2`
+- `idle narrative with long file path renders single-line` — asserts a 65-char path is replaced with a `…/`-shortened form and the basename is preserved
+
+The TimeAgo / memo refactor doesn't have a direct unit test (Ink test renderer can't easily measure re-render counts), but the existing component tests still pass with the new architecture, and the `.unref()` on the intervals keeps tests fast (sub-second instead of timing out on leaked timers).
+
 ## [0.5.2] — 2026-05-23
 
 Four findings from the post-v0.5 internal inspection. None affect what the dashboard renders; all close real correctness or UX gaps.

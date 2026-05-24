@@ -5,12 +5,47 @@
  * refresh-clock footer. Stateless — the parent passes a SessionState.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
 import type { SessionState } from '../types.js';
 import { colorFor, isLowConfidence, pillFor } from './theme.js';
 import { formatAgo, formatDelta } from './duration.js';
 import { sparkline } from './sparkline.js';
+
+/**
+ * v0.5.3: self-clocking footer that owns its own 1 s interval. Replaces
+ * the previous "every wall-clock tick re-renders the whole detail pane"
+ * shape — now only this small subtree updates each second.
+ */
+function RefreshFooter({
+  lastUpdated,
+  refreshIntervalMs,
+  pending,
+}: {
+  lastUpdated: number;
+  refreshIntervalMs: number;
+  pending: boolean;
+}): React.ReactElement {
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    id.unref?.(); // see TimeAgo.tsx for why we unref
+    return () => clearInterval(id);
+  }, []);
+  const lastRefresh = lastUpdated > 0 ? formatAgo(now, lastUpdated) : 'never';
+  const nextRefreshMs =
+    lastUpdated > 0
+      ? Math.max(0, lastUpdated + refreshIntervalMs - now)
+      : refreshIntervalMs;
+  return (
+    <Box marginTop={1}>
+      <Text dimColor>
+        Last refresh: {lastRefresh} · next refresh: ~{formatDelta(nextRefreshMs)}
+        {pending ? ' · refreshing…' : ''}
+      </Text>
+    </Box>
+  );
+}
 
 /**
  * v0.3.3: pinned sparkline width. Kept as a constant so the cell-Box and
@@ -93,7 +128,6 @@ function MdLine({ text }: { text: string }): React.ReactElement {
 
 export interface SessionDetailProps {
   state: SessionState | null;
-  now: number;
   refreshIntervalMs: number;
   /** v0.4.1: transient confirmation banner shown above the footer after the
    *  user presses `a` to whitelist drift findings. The parent owns the
@@ -101,9 +135,8 @@ export interface SessionDetailProps {
   flashMessage?: string | null;
 }
 
-export function SessionDetail({
+function SessionDetailInner({
   state,
-  now,
   refreshIntervalMs,
   flashMessage = null,
 }: SessionDetailProps): React.ReactElement {
@@ -124,14 +157,9 @@ export function SessionDetail({
   const dimBucket = !!bucket && isLowConfidence(confidence);
   const narrative = recap?.narrative ?? (state.pending ? 'Computing first recap…' : 'Waiting for first refresh.');
 
-  // Footer timing.
-  const lastRefreshLabel = state.lastUpdated > 0
-    ? formatAgo(now, state.lastUpdated)
-    : 'never';
-  const nextRefreshMs = state.lastUpdated > 0
-    ? Math.max(0, state.lastUpdated + refreshIntervalMs - now)
-    : refreshIntervalMs;
-  const nextRefreshLabel = `~${formatDelta(nextRefreshMs)}`;
+  // v0.5.3: footer timing now lives in <RefreshFooter />, a self-clocking
+  // subcomponent. The outer SessionDetail no longer needs `now` and can
+  // memoize at its parent boundary.
 
   return (
     <Box flexDirection="column" paddingX={1} minHeight={DETAIL_MIN_HEIGHT}>
@@ -229,12 +257,18 @@ export function SessionDetail({
         </Box>
       )}
 
-      <Box marginTop={1}>
-        <Text dimColor>
-          Last refresh: {lastRefreshLabel} · next refresh: {nextRefreshLabel}
-          {state.pending ? ' · refreshing…' : ''}
-        </Text>
-      </Box>
+      <RefreshFooter
+        lastUpdated={state.lastUpdated}
+        refreshIntervalMs={refreshIntervalMs}
+        pending={state.pending}
+      />
     </Box>
   );
 }
+
+/**
+ * v0.5.3: memoized export so the App's 1 s clock tick doesn't re-render
+ * the detail pane unless the underlying session state or props change.
+ * The RefreshFooter inside still updates each second on its own timer.
+ */
+export const SessionDetail = React.memo(SessionDetailInner);

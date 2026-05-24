@@ -49,6 +49,47 @@ function tick(token: string | undefined): string | undefined {
   return '`' + token + '`';
 }
 
+/**
+ * v0.5.3: middle-ellipsis a long file path so a narrative line doesn't
+ * wrap and push the Signals/Activity section down a row.
+ *
+ * Pre-v0.5.3, narratives like
+ *   "Earlier in the window it made 12 changes to
+ *    `C:\\Dev\\fit-ontology\\web\\app\\clients\\page.tsx` before going idle."
+ * would wrap onto two lines in a typical 100-col terminal, and the
+ * NARRATIVE_MIN_HEIGHT pad from v0.3.5 became the only thing keeping the
+ * layout stable. Compressing to `…/app/clients/page.tsx` keeps the
+ * single-line narrative cadence the rest of the dashboard reads in.
+ *
+ * Strategy:
+ *   1. Normalize backslashes to forward slashes
+ *   2. If already <= maxLen, return unchanged
+ *   3. Keep the trailing N segments that fit under maxLen with a leading
+ *      `…/` marker; always keep the basename
+ *   4. If even the basename alone is too long, keep it anyway — we never
+ *      mangle the filename itself, just the parent path
+ */
+function shortenPath(path: string | undefined, maxLen = 50): string | undefined {
+  if (!path) return path;
+  const normalized = path.replace(/\\/g, '/');
+  if (normalized.length <= maxLen) return normalized;
+
+  const segments = normalized.split('/').filter((s) => s.length > 0);
+  if (segments.length === 0) return normalized;
+  const basename = segments[segments.length - 1]!;
+
+  // Try walking back from the basename adding parent segments until the
+  // total (with leading "…/") would exceed maxLen.
+  let kept = basename;
+  for (let i = segments.length - 2; i >= 0; i -= 1) {
+    const candidate = segments[i] + '/' + kept;
+    const withMarker = '…/' + candidate;
+    if (withMarker.length > maxLen) break;
+    kept = candidate;
+  }
+  return '…/' + kept;
+}
+
 function driftSummary(messages: string[], limit = 3): string {
   return messages.slice(0, limit).join(', ');
 }
@@ -80,7 +121,7 @@ function renderConverging(enriched: EnrichedWindow, outcome: OutcomeSignal): str
   const duration = humanDuration(enriched.durationMs);
   const cluster = tick(topCluster(enriched.pathClusters));
   const editCount = enriched.actionCounts.editing ?? 0;
-  const primaryFile = tick(enriched.primaryFiles[0]);
+  const primaryFile = tick(shortenPath(enriched.primaryFiles[0]));
   // v0.3.1: gate verification claims on actual verification SIGNAL, not raw
   // count. `npm test` runs without parseable pass/fail output still bump
   // actionCounts.verification, but verificationTrend stays `no_data`. Pre-fix,
@@ -148,7 +189,7 @@ function renderStuck(enriched: EnrichedWindow, outcome: OutcomeSignal): string {
   const topic = enriched.topics[0] ?? 'your code';
   const duration = humanDuration(enriched.durationMs);
   const editCount = enriched.actionCounts.editing ?? 0;
-  const primaryFile = tick(enriched.primaryFiles[0]);
+  const primaryFile = tick(shortenPath(enriched.primaryFiles[0]));
   const verifDesc = verificationDescription(outcome.verificationTrend);
 
   const parts: string[] = [
@@ -201,7 +242,7 @@ function renderIdle(enriched: EnrichedWindow): string {
     lastEventMs > 0 ? enriched.windowEnd - lastEventMs : enriched.durationMs;
 
   const editCount = enriched.actionCounts.editing ?? 0;
-  const primaryFile = tick(enriched.primaryFiles[0]);
+  const primaryFile = tick(shortenPath(enriched.primaryFiles[0]));
   const cluster = tick(topCluster(enriched.pathClusters));
   const isEmptyWindow =
     enriched.toolInvocationCount === 0 && enriched.userMessageCount === 0;

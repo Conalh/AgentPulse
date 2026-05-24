@@ -191,47 +191,42 @@ export function App({
   // the result was stacked dashboards with mismatched session counts visible
   // simultaneously. 100 ms collapses a burst of events into one render —
   // imperceptible delay to a human but cuts render-thrash entirely.
+  //
+  // v0.5.3: merged the orchestrator + watcher debounces into a single
+  // shared scheduler. Pre-fix, a watcher 'change' event firing in the
+  // same 100 ms window as the resulting orchestrator 'session-updated'
+  // produced TWO setStates calls 100 ms apart — and therefore two Ink
+  // diff/render passes. With one shared timer, both sources collapse
+  // into one flush.
   useEffect(() => {
     let pendingTimer: ReturnType<typeof setTimeout> | null = null;
-    const flush = (): void => {
-      pendingTimer = null;
-      setStates(orchestrator.states());
-    };
-    const handler = (_e: OrchestratorEvent): void => {
+    const scheduleFlush = (): void => {
       if (pendingTimer) return; // already scheduled — coalesce
-      pendingTimer = setTimeout(flush, 100);
+      pendingTimer = setTimeout(() => {
+        pendingTimer = null;
+        setStates(orchestrator.states());
+      }, 100);
     };
-    orchestrator.on(handler);
+    const onOrchestratorEvent = (_e: OrchestratorEvent): void => scheduleFlush();
+    const onWatcherEvent = (_e: SessionEvent): void => scheduleFlush();
+    orchestrator.on(onOrchestratorEvent);
+    watcher.on(onWatcherEvent);
     return () => {
       if (pendingTimer) clearTimeout(pendingTimer);
-      orchestrator.off(handler);
+      orchestrator.off(onOrchestratorEvent);
+      watcher.off(onWatcherEvent);
     };
-  }, [orchestrator]);
+  }, [orchestrator, watcher]);
 
-  // Watcher events are largely handled outside (the wiring lives in
-  // runLiveTui), but we also listen here so the App can react to add/remove
-  // for selection-fallback purposes. Same 100 ms debounce — multiple file
-  // changes across sessions used to fire bursts of setStates.
-  useEffect(() => {
-    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
-    const flush = (): void => {
-      pendingTimer = null;
-      setStates(orchestrator.states());
-    };
-    const handler = (_e: SessionEvent): void => {
-      if (pendingTimer) return;
-      pendingTimer = setTimeout(flush, 100);
-    };
-    watcher.on(handler);
-    return () => {
-      if (pendingTimer) clearTimeout(pendingTimer);
-      watcher.off(handler);
-    };
-  }, [watcher, orchestrator]);
-
-  // Wall-clock tick — drives the "Xs ago" labels and the refresh countdown.
+  // Wall-clock tick — used by the whitelist-preview countdown banner.
+  // v0.5.3: the "Xs ago" labels in SessionList/SessionDetail no longer
+  // consume this tick (they're self-clocking via <TimeAgo> / RefreshFooter
+  // now). App still re-renders each second so the countdown stays current,
+  // but the children are React.memo'd against props that don't include
+  // `now`, so they don't re-diff on every tick.
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
+    id.unref?.();
     return () => clearInterval(id);
   }, []);
 
@@ -361,13 +356,18 @@ export function App({
 
     // Up: arrow / vim-k / WASD-w. Shifted variants honored so users with
     // sticky shift / caps lock aren't surprised.
+    //
+    // v0.5.3: wrap-around. Pressing Up at the top of the list jumps to the
+    // bottom; Down at the bottom jumps to the top. Standard vim/Ranger
+    // behaviour — at terminal-only list traversal this makes scanning a
+    // medium-sized session list dramatically less frustrating.
     if (key.upArrow || input === 'k' || input === 'w' || input === 'W') {
-      const next = Math.max(0, idx - 1);
+      const next = idx === 0 ? visibleStates.length - 1 : idx - 1;
       setSelectedId(visibleStates[next]!.session.id);
       return;
     }
     if (key.downArrow || input === 'j' || input === 's' || input === 'S') {
-      const next = Math.min(visibleStates.length - 1, idx + 1);
+      const next = idx === visibleStates.length - 1 ? 0 : idx + 1;
       setSelectedId(visibleStates[next]!.session.id);
       return;
     }
@@ -490,13 +490,12 @@ export function App({
       </Box>
 
       <Box borderStyle="round" flexDirection="column" paddingX={1}>
-        <SessionList states={visibleStates} selectedId={selectedId} now={now} />
+        <SessionList states={visibleStates} selectedId={selectedId} />
       </Box>
 
       <Box borderStyle="round" flexDirection="column">
         <SessionDetail
           state={selectedState}
-          now={now}
           refreshIntervalMs={refreshIntervalMs}
           flashMessage={flashMessage}
         />

@@ -167,17 +167,45 @@ interface ClassifiedEvent {
  * A "cycle" is an editing event followed by a verification event within
  * the next 3 classified events.
  */
+/**
+ * v0.5.3: find the next verification event after `startIdx`, skipping
+ * over interleaving exploration events (Read / Glob / Grep / LS) without
+ * counting them against the look-ahead budget. The budget applies only
+ * to non-exploration events.
+ *
+ * Pre-fix the look-ahead capped at 3 array positions, so an agent that
+ * edited a file then read 3 files for context before running tests would
+ * MISS the cycle — the verify event was past the window. Real agents do
+ * exploration between iterations; skipping it is the right semantics.
+ *
+ * Returns `-1` when no verification is reachable within the budget.
+ */
+function findNextVerificationIdx(
+  seq: readonly ClassifiedEvent[],
+  startIdx: number,
+  maxNonExplorationLookahead: number
+): number {
+  let nonExplorationLookedAt = 0;
+  for (let j = startIdx; j < seq.length; j++) {
+    const cls = seq[j]!.cls;
+    if (cls === 'verification') return j;
+    if (cls === 'exploration') continue; // skip; doesn't count toward budget
+    nonExplorationLookedAt += 1;
+    if (nonExplorationLookedAt >= maxNonExplorationLookahead) return -1;
+  }
+  return -1;
+}
+
 function countEditVerifyCycles(seq: ClassifiedEvent[]): number {
   let cycles = 0;
   for (let i = 0; i < seq.length; i++) {
     if (seq[i]!.cls !== 'editing') continue;
-    // Look ahead up to 3 classified events for a verification.
-    for (let j = i + 1; j < Math.min(seq.length, i + 1 + 3); j++) {
-      if (seq[j]!.cls === 'verification') {
-        cycles += 1;
-        i = j; // advance past this verify so we don't double-count
-        break;
-      }
+    // v0.5.3: skip-exploration look-ahead — see findNextVerificationIdx
+    // header for why this matters.
+    const j = findNextVerificationIdx(seq, i + 1, 3);
+    if (j >= 0) {
+      cycles += 1;
+      i = j; // advance past this verify so we don't double-count
     }
   }
   return cycles;
@@ -196,15 +224,13 @@ function detectStuckLoop(
   for (let i = 0; i < seq.length; i++) {
     const editEv = seq[i]!;
     if (editEv.cls !== 'editing' || !editEv.filePath) continue;
-    // Find the next verification within 3 events.
-    let verifyEv: ClassifiedEvent | null = null;
-    for (let j = i + 1; j < Math.min(seq.length, i + 1 + 3); j++) {
-      if (seq[j]!.cls === 'verification') {
-        verifyEv = seq[j]!;
-        break;
-      }
-    }
-    if (!verifyEv) continue;
+    // v0.5.3: skip-exploration look-ahead. An agent that edits, reads a
+    // few files to figure out what's broken, then runs tests is still
+    // executing a stuck loop on the original file — pre-fix we'd miss
+    // those cycles entirely.
+    const j = findNextVerificationIdx(seq, i + 1, 3);
+    if (j < 0) continue;
+    const verifyEv = seq[j]!;
     const passed = verificationPassed(verifyEv.ev);
     // Conservative: only count clear failures. Indeterminate doesn't count
     // as "stuck" (would be a false positive for runners with no parseable

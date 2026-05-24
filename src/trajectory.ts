@@ -279,16 +279,25 @@ const OUTSIDE_REPO_RE = /^(\/tmp\/|\/var\/|~\/)/;
  * outside-repo (the whole point of repo-rooted gating). Normalizes Windows
  * backslashes and drive-letter case so a write to `C:/Dev/Other/foo.py`
  * from a session rooted at `c:\dev\fit-ontology` correctly flags as drift.
+ *
+ * v0.5.3: split into `normalizePath` + `isPathOutsideNormalizedRoot` so
+ * the repoRoot can be normalized once per `detectDrifts` invocation rather
+ * than re-normalized on every Write event in the window. Hot path on long
+ * windows with many Writes.
  */
-function isOutsideRepoRoot(filePath: string, repoRoot: string): boolean {
-  const norm = (s: string): string =>
-    s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-  const f = norm(filePath);
-  const r = norm(repoRoot);
-  if (r.length === 0) return false;
+function normalizePath(s: string): string {
+  return s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function isPathOutsideNormalizedRoot(
+  filePath: string,
+  normalizedRoot: string
+): boolean {
+  if (normalizedRoot.length === 0) return false;
+  const f = normalizePath(filePath);
   // Treat the root itself as "inside" — a Write to the project dir is fine.
-  if (f === r) return false;
-  return !f.startsWith(r + '/');
+  if (f === normalizedRoot) return false;
+  return !f.startsWith(normalizedRoot + '/');
 }
 
 function buildDrift(
@@ -345,6 +354,11 @@ function detectDrifts(
   const drifts: Finding[] = [];
   const signals: string[] = [];
 
+  // v0.5.3: normalize the repoRoot exactly once. Pre-fix, every Write event
+  // in the window paid the cost of `replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase()`
+  // on the same root string — wasted on long windows with many edits.
+  const normalizedRepoRoot = repoRoot ? normalizePath(repoRoot) : '';
+
   // v0.4.1: helper that pairs a drift with its signal and applies the
   // exception baseline. When a drift's fingerprint is in the user-approved
   // set, BOTH the finding and its matching signal are dropped — otherwise
@@ -400,9 +414,11 @@ function detectDrifts(
       // v0.3.1: prefer repoRoot-relative comparison when available; fall back
       // to the legacy hardcoded-prefix check for backwards compat with
       // callers that don't pass a repo root yet.
+      // v0.5.3: use the pre-normalized root (computed once at the top of
+      // this function) instead of re-normalizing on every Write event.
       const normalized = filePath.replace(/\\/g, '/');
-      const outsideRepo = repoRoot
-        ? isOutsideRepoRoot(filePath, repoRoot)
+      const outsideRepo = normalizedRepoRoot
+        ? isPathOutsideNormalizedRoot(filePath, normalizedRepoRoot)
         : OUTSIDE_REPO_RE.test(normalized);
       if (outsideRepo) {
         pushIfNotExcepted(

@@ -2,18 +2,24 @@
  * Left pane — scrollable list of all known sessions with verdict pills.
  *
  * Stateless. The parent owns selection + state; we render what's given.
+ *
+ * v0.5.3: dropped the `now` prop and use the self-clocking `<TimeAgo>`
+ * cell for the "updated Xs ago" column. The pane re-renders only when
+ * its session set or selection changes, not on every wall-clock tick.
+ * Combined with the `React.memo` wrap exported below, this lets the
+ * App's 1 s clock drive a tight subtree (just the TimeAgo cells)
+ * instead of the entire dashboard.
  */
 
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { SessionState } from '../types.js';
 import { colorFor, isLowConfidence, pillFor } from './theme.js';
-import { formatAgo } from './duration.js';
+import { TimeAgo } from './TimeAgo.js';
 
 export interface SessionListProps {
   states: SessionState[];
   selectedId: string | null;
-  now: number;
 }
 
 /**
@@ -112,7 +118,7 @@ function labelCollisionKey(label: string, runtime: string): string {
   return `${label}|${runtime}`;
 }
 
-export function SessionList({ states, selectedId, now }: SessionListProps): React.ReactElement {
+function SessionListInner({ states, selectedId }: SessionListProps): React.ReactElement {
   if (states.length === 0) {
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -158,9 +164,9 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
             : s.error
               ? 'error'
               : '—';
-        const updatedLabel = s.lastUpdated > 0
-          ? `updated ${formatAgo(now, s.lastUpdated)}`
-          : 'no recap yet';
+        // v0.5.3: the "updated Xs ago" cell is rendered by `<TimeAgo>`
+        // below, which owns its own 1 s interval so the rest of the
+        // pane doesn't re-render every wall-clock tick.
 
         // v0.4.7: when the user has set an alias for this session, it
         // becomes the lead element of the row label — and replaces the
@@ -213,13 +219,25 @@ export function SessionList({ states, selectedId, now }: SessionListProps): Reac
                 {bucketLabel}
               </Text>
             </Box>
-            <Text dimColor>{updatedLabel}</Text>
+            {s.lastUpdated > 0 ? (
+              <TimeAgo timestamp={s.lastUpdated} prefix="updated " dim />
+            ) : (
+              <Text dimColor>no recap yet</Text>
+            )}
           </Box>
         );
       })}
     </Box>
   );
 }
+
+/**
+ * v0.5.3: wrap the pane in React.memo so it skips re-renders when the
+ * session set + selection are unchanged. With `now` removed from the
+ * prop surface (see SessionListInner), the parent's 1 s clock tick no
+ * longer forces a diff of every row.
+ */
+export const SessionList = React.memo(SessionListInner);
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
