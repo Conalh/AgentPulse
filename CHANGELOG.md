@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.5.5] — 2026-05-23
+
+### CI speedup batch
+
+Two compounding changes from the external inspection backlog (Gemini #5 + #6). No user-facing behaviour change in the live TUI; the GitHub Action and `live --once` mode both get visibly faster.
+
+### Changed — `live --once` now runs sessions in parallel
+
+Pre-fix, `runOnceMode` awaited each session's `pulse()` sequentially in a `for` loop. On CI runs against artifact directories with dozens of historical transcripts, this scaled linearly — and CI runs against artifact directories with dozens of historical transcripts is the whole point of `--once`.
+
+- New `runConcurrent(tasks, concurrency)` helper in `src/once.ts` (exported for direct unit testing). Hand-rolled — 12 lines, zero deps. Spawns up to `concurrency` workers that pull tasks off the list in order; per-index result assignment preserves the original input order so the text report iterates sessions in their discovery order, same as the pre-fix loop.
+- Default concurrency is `6`. Tunable via `AP_ONCE_CONCURRENCY=<N>` env var for users with unusual CI runner shapes (giant artifacts on slow disks → lower; fast NVMe + many sessions → higher).
+- On a typical run with 24 historical transcripts, CI wall-clock for the analysis step drops from ~24 × per-session latency to ~ceil(24/6) × per-session latency — roughly 4× faster for that step.
+
+### Changed — GitHub Action invokes the published npm package
+
+The composite action used to `npm ci --omit=dev && npm run build` on every workflow run before invoking AgentPulse. That's 5-15 s of pure overhead and one extra failure mode (a transient npm registry hiccup mid-`ci` surfaces as "AgentPulse build failed" rather than a real signal).
+
+- The action now resolves the version from its own checked-out `package.json` and invokes `npx --yes @conalh/agentpulse@${VERSION} live --once …`. First call populates the npm cache; second is a cache hit. The action's git ref (e.g. `Conalh/AgentPulse@v0.5.5`) and the npm version stay in lockstep automatically — no hardcoded version string in `action.yml` that could drift.
+- The `Install AgentPulse dependencies + build` step is gone. The `actions/setup-node@v4` step stays — npx still needs node, and the runner-default node version isn't guaranteed across runners.
+- The action ref in `README.md` and `examples/agentpulse-pr-check.yml` is bumped to `@v0.5.5`.
+
+### Tests
+
+183 (was 179). Four new tests on the `runConcurrent` helper:
+- Preserves input order in the results array even when tasks resolve in reverse order
+- Caps in-flight tasks at the configured concurrency value
+- Empty task list returns an empty array
+- `concurrency = 1` is strictly sequential (degenerate but legal — useful for debugging)
+
+The action.yml change is verified by inspection — the workflow shape doesn't have a unit-test harness, but the script logic is straightforward shell + the existing `live --once` CLI surface is exhaustively tested.
+
 ## [0.5.4] — 2026-05-23
 
 ### Added — verdict hysteresis (the "feels smarter" change)

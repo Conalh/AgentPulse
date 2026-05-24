@@ -111,22 +111,25 @@ runs:
       with:
         node-version: 20
 
-    - name: Install AgentPulse dependencies + build
+    - name: Resolve AgentPulse version
+      id: version
       shell: bash
       working-directory: ${{ github.action_path }}
-      # We run from the action's own git ref (e.g. `Conalh/AgentPulse@v0.5.2`),
-      # so the checkout already has the right source. Install runtime deps
-      # only (no test deps) and tsc-build to `dist/`. AgentPulse keeps its
-      # build step fast (no bundler) — adds maybe 5 seconds to the job.
+      # v0.5.5: the action is checked out at the user-pinned git ref
+      # (e.g. `Conalh/AgentPulse@v0.5.5`), so the version field on the
+      # ref's own package.json IS the right thing to install from npm.
+      # Action ref and npm version stay in lockstep automatically — no
+      # hardcoded version string in this file that could drift.
       run: |
         set -euo pipefail
-        npm ci --omit=dev --no-audit --no-fund
-        npm run build
+        version=$(node -p "require('./package.json').version")
+        echo "version=$version" >> "$GITHUB_OUTPUT"
 
     - name: Run AgentPulse one-shot
       id: run
       shell: bash
       env:
+        AP_VERSION: ${{ steps.version.outputs.version }}
         AP_TRANSCRIPT_DIRS: ${{ inputs.transcript-dirs }}
         AP_WINDOW: ${{ inputs.window }}
         AP_STALE: ${{ inputs.stale }}
@@ -140,7 +143,15 @@ runs:
 
         report_json="${RUNNER_TEMP:-.}/agentpulse-report.json"
         report_text="${RUNNER_TEMP:-.}/agentpulse-report.txt"
-        cli="$GITHUB_ACTION_PATH/dist/cli.js"
+        # v0.5.5: invoke the published npm package via `npx`. The first
+        # call downloads the tarball into npm's cache; the second is a
+        # cache hit. Cuts ~5-15s of pre-analysis overhead off the run
+        # (npm ci + tsc) and removes the failure mode where a transient
+        # registry hiccup would surface as "AgentPulse build failed".
+        # `--yes` suppresses the install-confirm prompt npx asks in
+        # interactive shells; CI is non-interactive so it's a no-op
+        # there, but we keep it for clarity.
+        cli=(npx --yes "@conalh/agentpulse@${AP_VERSION}")
 
         args=(live --once)
 
@@ -168,8 +179,8 @@ runs:
         # the JSON (so the workflow check fails on our own ::error line,
         # not on a downstream CLI exit code).
         set +e
-        node "$cli" "${args[@]}" --format json > "$report_json"
-        node "$cli" "${args[@]}" --format text > "$report_text"
+        "${cli[@]}" "${args[@]}" --format json > "$report_json"
+        "${cli[@]}" "${args[@]}" --format text > "$report_text"
         set -e
 
         # Parse the JSON outputs.

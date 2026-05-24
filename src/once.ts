@@ -19,6 +19,48 @@ import type {
   TrajectoryBucket,
 } from './types.js';
 
+/**
+ * v0.5.5: how many session pulses can run in parallel. Disk I/O on
+ * transcript files is the bottleneck; ~6 keeps a typical 4-8 core CI
+ * runner saturated without thrashing the filesystem queue. Configurable
+ * via `AP_ONCE_CONCURRENCY` env var for users who want to tune.
+ */
+const ONCE_CONCURRENCY: number = (() => {
+  const fromEnv = Number.parseInt(process.env.AP_ONCE_CONCURRENCY ?? '', 10);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+  return 6;
+})();
+
+/**
+ * Concurrency-capped task runner. Spawns up to `concurrency` workers
+ * that pull tasks off the list in order; each worker awaits one task
+ * fully before fetching the next. Output is indexed so the returned
+ * array preserves the original task order — important here because
+ * the text report iterates sessions in their discovery order.
+ *
+ * Hand-rolled to avoid a runtime dependency on `p-limit` for a tiny
+ * helper used in exactly one place.
+ */
+export async function runConcurrent<T>(
+  tasks: ReadonlyArray<() => Promise<T>>,
+  concurrency: number
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let nextIdx = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const idx = nextIdx++;
+      if (idx >= tasks.length) return;
+      results[idx] = await tasks[idx]!();
+    }
+  }
+
+  const workerCount = Math.min(Math.max(1, concurrency), tasks.length);
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return results;
+}
+
 interface SessionSnapshot {
   id: string;
   projectName: string | undefined;
@@ -59,8 +101,20 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
     staleMs,
   });
 
-  const snapshots: SessionSnapshot[] = [];
-  for (const session of sessions) {
+  // v0.5.5: parallel session pulses with a concurrency cap. Pre-fix
+  // every session was awaited sequentially, so CI runs against artifact
+  // directories with dozens of historical transcripts paid linear cost.
+  // Sessions are independent — pulse() does not share state across them
+  // — so parallelization is safe; the cap keeps disk I/O from
+  // thrashing on shared CI runners.
+  //
+  // Why hand-rolled vs. `p-limit`: zero deps. The runner is 12 lines and
+  // single-purpose. Output order is preserved via per-index assignment
+  // so the text report iterates sessions in their discovery order, same
+  // as the pre-fix sequential loop.
+  async function runOneSession(
+    session: (typeof sessions)[number]
+  ): Promise<SessionSnapshot> {
     try {
       const recap = await pulse({
         transcriptDir: session.transcriptPath,
@@ -69,9 +123,15 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
         repoRoot: session.cwd,
         silent: true,
       });
-      snapshots.push(snapshotFromRecap(session.id, session.projectName, session.runtime, session.transcriptPath, recap));
+      return snapshotFromRecap(
+        session.id,
+        session.projectName,
+        session.runtime,
+        session.transcriptPath,
+        recap
+      );
     } catch (err) {
-      snapshots.push({
+      return {
         id: session.id,
         projectName: session.projectName,
         runtime: session.runtime,
@@ -82,9 +142,14 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
         signals: [],
         driftCount: 0,
         error: err instanceof Error ? err.message : String(err),
-      });
+      };
     }
   }
+
+  const snapshots: SessionSnapshot[] = await runConcurrent(
+    sessions.map((s) => () => runOneSession(s)),
+    ONCE_CONCURRENCY
+  );
 
   const report = buildReport(snapshots);
 
