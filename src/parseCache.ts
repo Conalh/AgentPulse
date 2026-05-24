@@ -1,0 +1,300 @@
+/**
+ * v0.6.0 — incremental transcript parsing.
+ *
+ * Pre-v0.6, every refresh re-walked the full transcript file end-to-end:
+ * a 2-hour Claude Code session with a 10 MB JSONL ate ~10 MB of disk I/O
+ * and N thousand JSON.parse calls every 30 seconds, of which the vast
+ * majority of events were immediately dropped by the windowing filter.
+ *
+ * This module reads only what's new. Per-path state tracks the byte
+ * offset of the last complete line we've parsed. On the next pulse we
+ * `stat` the file:
+ *
+ *   - size unchanged + mtime unchanged → return cached events, no read
+ *   - size grew                        → tail-read [lastOffset, size),
+ *                                        parse only the new lines,
+ *                                        append to cached events
+ *   - size shrank or mtime regressed   → file was rotated or truncated,
+ *                                        evict the entry and start fresh
+ *   - file missing                     → evict the entry, return []
+ *
+ * Window filtering happens AFTER incremental read — the cache holds a
+ * superset of what any single pulse needs (older events that may still
+ * be inside the window). We prune events older than the window with a
+ * generous safety margin so memory doesn't grow unbounded for a
+ * many-hour session.
+ *
+ * On a partial final line (the agent is mid-write), we stop at the last
+ * complete `\n`; the deferred bytes get picked up on the next read.
+ *
+ * The cache is process-wide so multiple orchestrators (or live + watcher
+ * both consulting the same file) share state. Failure modes (read error,
+ * parse error on a line) follow the same silent-by-default pattern as
+ * the v1.1.0 substrate parser.
+ */
+
+import { open, stat } from 'node:fs/promises';
+import {
+  detectAnthropicRuntime,
+  interpolateTimestamps,
+  isCodexLine,
+  isCodexSessionMeta,
+  isRecord,
+  parseAnthropicLine,
+  parseCodexLine,
+} from 'agent-gov-core';
+import type { TranscriptEvent } from 'agent-gov-core';
+
+interface CacheEntry {
+  /** Byte offset JUST PAST the last complete line we've parsed. The next
+   *  read starts here. */
+  endByteOffset: number;
+  /** mtime at the last successful read. Used to detect rotation/truncation. */
+  lastMtimeMs: number;
+  /** Size at the last successful read. Same purpose as lastMtimeMs. */
+  lastSize: number;
+  /** All events parsed so far, kept in chronological order. Pruned by
+   *  `readWindowFromCache` to a generous superset of the active window. */
+  events: TranscriptEvent[];
+}
+
+const cache = new Map<string, CacheEntry>();
+
+/**
+ * How much extra history to retain in the cache beyond the active
+ * window's start. Generous margin so a window expanding (e.g. user
+ * tweaking `--window 1h` from 20m) doesn't immediately require a full
+ * re-read. 1 hour covers realistic window-resize moves without bloating
+ * memory for typical sessions.
+ */
+const PRUNE_MARGIN_MS = 60 * 60 * 1000;
+
+/**
+ * Read events for the [since, until] window from `path`, using the
+ * per-path incremental cache. Returns a freshly-filtered, chronologically
+ * sorted `TranscriptEvent[]`.
+ *
+ * Drop-in replacement for the (file-path subset of) the v1.1.0
+ * `parseTranscriptDir` semantics, with the same handling of:
+ *  - missing file → empty array
+ *  - malformed lines → counted + skipped
+ *  - missing timestamps → interpolated from neighbors
+ *  - window boundaries → filter to [since, until] inclusive
+ */
+export async function readWindowFromCache(
+  path: string,
+  since: number,
+  until: number,
+  opts: { silent?: boolean } = {}
+): Promise<TranscriptEvent[]> {
+  const silent = opts.silent ?? false;
+
+  let fileStat;
+  try {
+    fileStat = await stat(path);
+  } catch (err) {
+    // Drop any cached state and rethrow with a contextual message,
+    // matching the v1.1.0 substrate parser's behaviour on a missing
+    // transcript path. The orchestrator's try/catch promotes this
+    // into `SessionState.error`. A live session whose file gets
+    // rotated/deleted between pulses will be caught here; the watcher
+    // emits a 'remove' event independently which evicts the session.
+    cache.delete(path);
+    throw new Error(
+      `transcript-parser: cannot read transcript path "${path}": ${(err as Error).message}`
+    );
+  }
+
+  let entry = cache.get(path);
+
+  // Rotation / truncation detection. A real append-only transcript
+  // only grows; a smaller size or older mtime means the file was
+  // rotated, truncated, or replaced — reset and start fresh.
+  if (entry && (fileStat.size < entry.lastSize || fileStat.mtimeMs < entry.lastMtimeMs)) {
+    entry = undefined;
+    cache.delete(path);
+  }
+
+  // Fast path: no change since the last read. Just filter and return.
+  if (
+    entry &&
+    entry.endByteOffset === fileStat.size &&
+    entry.lastMtimeMs === fileStat.mtimeMs
+  ) {
+    return filterAndPrune(entry, since, until);
+  }
+
+  const fromOffset = entry ? entry.endByteOffset : 0;
+  const lengthToRead = fileStat.size - fromOffset;
+
+  // Defensive: if the cache offset somehow exceeds the file size (caught
+  // above for explicit shrinkage; this handles equality with mtime mismatch),
+  // just refresh the metadata and return current state.
+  if (lengthToRead <= 0) {
+    if (entry) {
+      entry.lastMtimeMs = fileStat.mtimeMs;
+      entry.lastSize = fileStat.size;
+      return filterAndPrune(entry, since, until);
+    }
+    return [];
+  }
+
+  // Read the new bytes only.
+  const handle = await open(path, 'r');
+  let raw: string;
+  try {
+    const buf = Buffer.alloc(lengthToRead);
+    await handle.read(buf, 0, lengthToRead, fromOffset);
+    raw = buf.toString('utf8');
+  } finally {
+    await handle.close();
+  }
+
+  // Find the last complete newline. Anything after it is an incomplete
+  // line (the agent is mid-write); defer to the next read.
+  const lastNewlineIdx = raw.lastIndexOf('\n');
+  const completeBlock = lastNewlineIdx >= 0 ? raw.slice(0, lastNewlineIdx + 1) : '';
+  const consumedBytes = lastNewlineIdx >= 0 ? lastNewlineIdx + 1 : 0;
+
+  const newEvents = parseLines(completeBlock, silent);
+
+  if (!entry) {
+    entry = {
+      endByteOffset: 0,
+      lastMtimeMs: 0,
+      lastSize: 0,
+      events: [],
+    };
+  }
+
+  entry.events.push(...newEvents);
+  entry.endByteOffset = fromOffset + consumedBytes;
+  entry.lastMtimeMs = fileStat.mtimeMs;
+  entry.lastSize = fileStat.size;
+
+  // Interpolate timestamps across the FULL event set. New events may
+  // have zero timestamps that should borrow from the events before
+  // them in the cached prefix.
+  interpolateTimestamps(entry.events);
+
+  cache.set(path, entry);
+  return filterAndPrune(entry, since, until);
+}
+
+/**
+ * Filter cached events to the active window, prune events that have
+ * permanently fallen out of any plausible future window.
+ *
+ * Pruning is done in-place on the entry to keep memory bounded for
+ * many-hour sessions.
+ */
+function filterAndPrune(
+  entry: CacheEntry,
+  since: number,
+  until: number
+): TranscriptEvent[] {
+  const pruneThreshold = since - PRUNE_MARGIN_MS;
+  if (entry.events.length > 0 && entry.events[0]!.timestamp < pruneThreshold) {
+    entry.events = entry.events.filter((e) => e.timestamp >= pruneThreshold);
+  }
+
+  const filtered: TranscriptEvent[] = [];
+  for (const e of entry.events) {
+    if (e.timestamp === 0) continue; // timestamp-0 events have no window membership
+    if (e.timestamp < since) continue;
+    if (e.timestamp > until) continue;
+    filtered.push(e);
+  }
+
+  // Cache events are appended in arrival order; sort defensively in case
+  // a tail-read produced an out-of-order chunk (clock skew between
+  // sessions writing to the same logical stream — rare but cheap to handle).
+  filtered.sort((a, b) => a.timestamp - b.timestamp);
+  return filtered;
+}
+
+/**
+ * Parse a block of newline-terminated JSONL lines into TranscriptEvents.
+ * Mirrors the per-line dispatch in agent-gov-core's
+ * `parseTranscriptDir/parseFile`: codex shapes first (so cross-runtime
+ * files don't mislabel), then anthropic, then a force-anthropic
+ * fallback when the line has shape hints.
+ *
+ * Skipped lines (invalid JSON, unrecognized shape) are counted; an
+ * aggregate warning is emitted to `console.warn` unless `silent`.
+ */
+function parseLines(rawText: string, silent: boolean): TranscriptEvent[] {
+  if (rawText.length === 0) return [];
+
+  const events: TranscriptEvent[] = [];
+  let lines = 0;
+  let skipped = 0;
+
+  for (const line of rawText.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    lines += 1;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      skipped += 1;
+      continue;
+    }
+
+    // Codex first — its `default` payload-type branch always returns an
+    // event, so we must route on shape, not on a sticky session flag.
+    if (isCodexSessionMeta(parsed) || isCodexLine(parsed)) {
+      const out = parseCodexLine(parsed);
+      if (out) {
+        events.push(...out);
+        continue;
+      }
+    }
+
+    const anthropic = parseAnthropicLine(parsed);
+    if (anthropic) {
+      events.push(...anthropic);
+      continue;
+    }
+
+    // Last-ditch: anything anthropic-shaped goes through the force path.
+    if (isRecord(parsed) && (parsed.message || parsed.role || parsed.type)) {
+      const runtime = detectAnthropicRuntime(
+        parsed as Parameters<typeof detectAnthropicRuntime>[0]
+      );
+      const forced = parseAnthropicLine(parsed, runtime);
+      if (forced) {
+        events.push(...forced);
+        continue;
+      }
+    }
+
+    skipped += 1;
+  }
+
+  if (skipped > 0 && !silent) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[agentpulse:parseCache] skipped ${skipped} of ${lines} line(s) on incremental read`
+    );
+  }
+
+  return events;
+}
+
+/**
+ * Drop the cached state for `path`. Called by the watcher when a file
+ * is removed, and exposed for tests + tools that need to force a full
+ * re-read on the next call.
+ */
+export function evictParseCache(path: string): void {
+  cache.delete(path);
+}
+
+/**
+ * Drop ALL cached state. Tests use this between cases to avoid leak.
+ */
+export function clearParseCache(): void {
+  cache.clear();
+}

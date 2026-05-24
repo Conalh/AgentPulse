@@ -2,6 +2,70 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.6.0] — 2026-05-23
+
+### Added — incremental transcript parsing (Gemini #1)
+
+The biggest perf win on the inspection backlog. Pre-v0.6, every live-mode refresh re-read the full transcript file end-to-end: a 2-hour Claude Code session with a 10 MB JSONL ate ~10 MB of disk I/O and N thousand `JSON.parse` calls every 30 s, of which most events were immediately dropped by the windowing filter. With N sessions in the dashboard, multiply by N.
+
+v0.6.0 reads only what's new. Per-path state tracks the byte offset of the last complete line we've parsed; subsequent pulses tail-read `[lastOffset, currentSize)` instead of the whole file.
+
+### How it works (`src/parseCache.ts`)
+
+On each call to `readWindowFromCache(path, since, until)`:
+
+- `stat` the file. Compare `mtimeMs` + `size` against the cached values.
+- **No change**: return window-filtered cached events. Zero I/O beyond the stat.
+- **Grew**: open the file, `read(buf, 0, size - lastOffset, lastOffset)` — exactly the new bytes. Parse appended lines, append to cached event list, advance `lastOffset` past the last complete `\n`. Bytes after the last `\n` (an in-progress line) get deferred to the next pulse.
+- **Shrank or mtime regressed**: file was rotated/truncated. Evict the cache entry and full-re-read on this pulse.
+- **Missing file**: throws (matches `parseTranscriptDir`'s contract; the orchestrator captures this into `SessionState.error`).
+
+Cached events are pruned with a 1-hour margin past the window start so a 24-hour session doesn't grow memory without bound, while still tolerating `--window` resizes without a full re-read.
+
+### Wiring
+
+- **`PulseOptions.events`** (new) — caller-supplied pre-parsed events that bypass `pulse()`'s own parser entirely. CLI callers (`recap`, `live --once`) leave this unset; the orchestrator sets it.
+- **`src/orchestrator.ts:runPulse`** — calls `readWindowFromCache(path, startAt, endAt, { silent: true })` first, then `pulse({ events, endAt, … })`. The explicit `endAt` keeps the window math consistent between the cache filter and pulse's internal startAt computation.
+- **`evictParseCache(path)`** wired into the orchestrator's `remove(sessionId)` so the cache doesn't hang onto state for a deleted session.
+
+### Substrate
+
+No agent-gov-core change needed for this release. The substrate's v1.1.0 per-runtime line parsers (`parseAnthropicLine`, `parseCodexLine`, `isCodexLine`, etc.) and timestamp helpers (`coerceTimestamp`, `interpolateTimestamps`, `isRecord`) cover everything the cache needs. The cache is pure AgentPulse logic on top of the existing public surface.
+
+### Expected speedup
+
+For a 10 MB transcript on a 30 s refresh:
+
+- **Pre-v0.6**: ~10 MB read + N thousand `JSON.parse` calls per pulse.
+- **Post-v0.6**: typical pulse reads only what the agent appended in the last 30 s (often a few KB) + parses ~5–50 lines.
+
+The bigger the transcript, the bigger the gain. CI / `live --once` mode is unaffected — that path keeps using `parseTranscriptDir` (whole-file, batch).
+
+### Why a minor bump (v0.6.0)
+
+`PulseOptions.events` is an additive optional field — fully backward-compatible. The behaviour change is internal (live-mode orchestrator routes through the cache); external API is unchanged. Calling this `v0.6.0` instead of `v0.5.7` to mark a meaningful internal performance shift, not because anything broke.
+
+### Tests
+
+204 (was 194). Ten new tests in `parseCache.test.mjs`:
+
+- First-call full parse
+- Second-call cache hit (no re-read)
+- Tail-read only of appended bytes
+- Window filter applied at each call (sliding window)
+- Incomplete final line deferred to next read
+- Rotation/truncation (file shrinks) evicts cache and re-reads
+- Missing file throws (matches parseTranscriptDir contract)
+- File disappearing between pulses throws on the next call
+- `evictParseCache(path)` forces a full re-read
+- Old events past the prune threshold drop out of the cached set
+
+The orchestrator's existing 7 tests cover the integration; one test had to verify that "errors are captured" still works — the cache's new "throw on missing file" behaviour preserves it.
+
+### Bumped
+
+- Action ref in `README.md` + `examples/agentpulse-pr-check.yml`: `@v0.5.6` → `@v0.6.0`.
+
 ## [0.5.6] — 2026-05-23
 
 ### Added — mtime-keyed JSON file cache (Gemini #4)

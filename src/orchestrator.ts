@@ -22,6 +22,7 @@ import { pulse } from './index.js';
 import { loadAliases } from './aliases.js';
 import { applyHysteresis, initialHysteresis } from './hysteresis.js';
 import type { HysteresisState } from './hysteresis.js';
+import { evictParseCache, readWindowFromCache } from './parseCache.js';
 import type {
   DiscoveredSession,
   OrchestratorEvent,
@@ -95,9 +96,30 @@ export function createOrchestrator(
     let recap: PulseRecap | null = null;
     let error: string | undefined;
     try {
+      // v0.6.0: incremental transcript read. Pre-fix, pulse() called
+      // parseTranscriptDir which re-read the whole transcript file
+      // every refresh. With parseCache, we read only new bytes since
+      // the previous pulse and reuse cached events for older lines.
+      // For a 2-hour session with a 10 MB transcript on a 30 s refresh
+      // cadence, the per-pulse I/O drops to whatever the agent appended
+      // in the last 30 s — typically a few KB.
+      //
+      // Window math is identical to what pulse() would compute (endAt
+      // = Date.now(), startAt = endAt - windowMs), so the events the
+      // cache filters to are exactly what pulse()'s internal filter
+      // would have produced.
+      const endAt = Date.now();
+      const startAt = endAt - windowMs;
+      const events = await readWindowFromCache(
+        state.session.transcriptPath,
+        startAt,
+        endAt,
+        { silent: true }
+      );
       recap = await pulse({
         transcriptDir: state.session.transcriptPath,
         windowMs,
+        endAt, // explicit so pulse uses the same endAt the cache filtered against
         detectorsEnabled,
         // v0.3.1: each session's cwd (extracted from its first transcript
         // line at discovery time) becomes the repoRoot for drift detection.
@@ -109,6 +131,8 @@ export function createOrchestrator(
         // Ink's screen redraw and cause whole-window flicker on every
         // 30-second refresh tick.
         silent: true,
+        // v0.6.0: pre-parsed events bypass pulse()'s parser entirely.
+        events,
       });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -256,6 +280,11 @@ export function createOrchestrator(
       clearTimeout(state.timer);
       state.timer = undefined;
     }
+    // v0.6.0: drop the parseCache entry too. The session is gone — any
+    // future re-discovery of the same path (e.g. transcript replaced)
+    // must start with a clean cache so file-rotation detection logic
+    // isn't tripped up by stale offset state.
+    evictParseCache(state.session.transcriptPath);
     states.delete(sessionId);
     emit({ type: 'session-removed', sessionId });
   }

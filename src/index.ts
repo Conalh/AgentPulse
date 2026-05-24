@@ -34,7 +34,7 @@ import { classifyTrajectory, readOutcomeSignal } from './trajectory.js';
 import { analyzeSequences } from './sequences.js';
 import { renderRecap } from './narrative.js';
 import { loadExceptions } from './exceptions.js';
-import type { PulseRecap } from './types.js';
+import type { PulseRecap, TranscriptEvent } from './types.js';
 
 export { loadExceptions, appendExceptions } from './exceptions.js';
 
@@ -58,6 +58,15 @@ export interface PulseOptions {
    *  path. When omitted, falls back to `repoRoot`. When neither is set,
    *  no exceptions are loaded — drift detection runs normally. */
   exceptionsPath?: string;
+  /** v0.6.0: pre-parsed events. When supplied, pulse() skips its own
+   *  parser invocation entirely and uses these events directly. The
+   *  orchestrator uses this to thread incrementally-parsed events into
+   *  the pipeline — same recap output, dramatically less I/O on long
+   *  sessions. CLI callers (`recap`, `live --once`) leave this unset
+   *  and get the normal whole-file parse. The events MUST already be
+   *  filtered to the [windowEnd - windowMs, windowEnd] window — pulse()
+   *  trusts the caller. */
+  events?: TranscriptEvent[];
 }
 
 /**
@@ -96,7 +105,11 @@ export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
   };
 
   let t = profile ? performance.now() : 0;
-  const events = await parseTranscriptDir(opts.transcriptDir, {
+  // v0.6.0: if the caller supplied pre-parsed events (the orchestrator's
+  // incremental-parse path), use them directly and skip the substrate
+  // parser. The caller is responsible for window-filtering — we trust
+  // the contract documented on PulseOptions.events.
+  const events = opts.events ?? await parseTranscriptDir(opts.transcriptDir, {
     since: startAt,
     until: endAt,
     silent: opts.silent,

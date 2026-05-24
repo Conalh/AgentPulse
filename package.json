@@ -1,6 +1,6 @@
 {
   "name": "@conalh/agentpulse",
-  "version": "0.5.6",
+  "version": "0.6.0",
   "description": "Live trajectory verdict for AI coding agent sessions. Reads Claude Code / Cursor / Codex transcripts locally, classifies what the agent is doing, renders it as plain English. No LLM, no cloud, no telemetry.",
   "type": "module",
   "main": "./dist/index.js",
