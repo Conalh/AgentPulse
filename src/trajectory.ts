@@ -14,6 +14,7 @@
 
 import type { Finding } from 'agent-gov-core';
 import { fingerprintFinding } from 'agent-gov-core';
+import { canonicalToolName } from './normalize.js';
 import type {
   EnrichedWindow,
   OutcomeSignal,
@@ -111,7 +112,13 @@ const COMPLETION_VERBS: RegExp[] = [
  * exit code wins, or a textual heuristic over the command/result.
  */
 function isVerificationEvent(ev: TranscriptEvent): boolean {
-  if (ev.kind !== 'tool_use' || ev.toolName !== 'Bash') return false;
+  if (ev.kind !== 'tool_use') return false;
+  // v0.6.2: accept Codex's `shell` in addition to Anthropic's `Bash`.
+  // Pre-fix, a Codex session running `npm test` via `shell` was
+  // ignored by the verification-trend computation — so even a clean
+  // TDD shape on Codex produced `no_data`, mirroring the v0.6.1
+  // tool_use vs tool_result bug at a different layer.
+  if (canonicalToolName(ev.toolName) !== 'Bash') return false;
   const cmd = String(
     (ev.toolInput && (ev.toolInput.command as unknown)) ?? ''
   ).toLowerCase();
@@ -311,12 +318,41 @@ function normalizePath(s: string): string {
   return s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
+/**
+ * v0.6.2: detect whether `filePath` is an absolute path (Unix `/...` or
+ * Windows `C:/...`) after backslash normalization. Used by the
+ * outside-repo check so relative paths get resolved against `cwd`
+ * before being compared against the repo root.
+ */
+function isAbsolutePath(filePath: string): boolean {
+  const f = filePath.replace(/\\/g, '/');
+  return /^([a-z]:)?\//i.test(f);
+}
+
 function isPathOutsideNormalizedRoot(
   filePath: string,
-  normalizedRoot: string
+  normalizedRoot: string,
+  cwd?: string
 ): boolean {
   if (normalizedRoot.length === 0) return false;
-  const f = normalizePath(filePath);
+
+  // v0.6.2: handle relative tool paths. Pre-fix, a Write to `src/foo.ts`
+  // was always flagged as outside-repo because the comparison did
+  // `normalizePath('src/foo.ts').startsWith('c:/dev/repo/')` — which is
+  // never true. Real transcripts emit relative paths constantly
+  // (Cursor especially); ~half of dogfooded Write events were getting
+  // false-flagged. Now: resolve relative paths against the event's
+  // `cwd` first; if there's no cwd, treat the path as safe (inside) —
+  // false negative on drift is strictly better than false positive
+  // on legitimate edits.
+  let toCheck = filePath;
+  if (!isAbsolutePath(filePath)) {
+    if (!cwd) return false; // no way to tell — defensively NOT outside
+    const cleanCwd = cwd.replace(/[\\/]+$/, '');
+    toCheck = `${cleanCwd}/${filePath}`;
+  }
+
+  const f = normalizePath(toCheck);
   // Treat the root itself as "inside" — a Write to the project dir is fine.
   if (f === normalizedRoot) return false;
   return !f.startsWith(normalizedRoot + '/');
@@ -432,15 +468,22 @@ function detectDrifts(
       }
     }
 
-    if (ev.toolName === 'Write' && filePath) {
+    // v0.6.2: also accept Codex's `apply_patch` (which canonicalizes to
+    // `Edit`, not `Write`, but is the runtime's analogue for filesystem
+    // mutation). Pre-fix, Codex sessions writing outside the repo never
+    // tripped the detector.
+    const canonicalName = canonicalToolName(ev.toolName);
+    if ((canonicalName === 'Write' || canonicalName === 'Edit') && filePath) {
       // v0.3.1: prefer repoRoot-relative comparison when available; fall back
       // to the legacy hardcoded-prefix check for backwards compat with
       // callers that don't pass a repo root yet.
       // v0.5.3: use the pre-normalized root (computed once at the top of
       // this function) instead of re-normalizing on every Write event.
+      // v0.6.2: pass the event's cwd so relative paths resolve correctly
+      // — without this, every `src/foo.ts` Write was flagged as outside-repo.
       const normalized = filePath.replace(/\\/g, '/');
       const outsideRepo = normalizedRepoRoot
-        ? isPathOutsideNormalizedRoot(filePath, normalizedRepoRoot)
+        ? isPathOutsideNormalizedRoot(filePath, normalizedRepoRoot, ev.cwd)
         : OUTSIDE_REPO_RE.test(normalized);
       if (outsideRepo) {
         pushIfNotExcepted(

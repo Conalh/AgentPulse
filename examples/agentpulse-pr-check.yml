@@ -32,7 +32,7 @@ jobs:
           path: agentpulse-transcripts
         continue-on-error: true
 
-      - uses: Conalh/AgentPulse@v0.6.1
+      - uses: Conalh/AgentPulse@v0.6.2
         id: agentpulse
         with:
           transcript-dirs: agentpulse-transcripts

@@ -312,6 +312,85 @@ test('classifyTrajectory: drifting — Write to /tmp/', () => {
   assert.ok(verdict.drifts.some((d) => d.kind.includes('outside_repo_write')));
 });
 
+test('classifyTrajectory: relative Write inside cwd does NOT trigger outside-repo drift (v0.6.2)', () => {
+  // External-inspection regression. Pre-v0.6.2, repoRoot-based drift
+  // detection compared the literal file path against the normalized
+  // root. A relative path like `src/foo.ts` could never start with
+  // `c:/dev/repo/`, so every relative Write was flagged as outside-
+  // repo drift — a false positive on legitimate edits, which is the
+  // common case for tools that emit relative paths (Cursor in
+  // particular).
+  //
+  // Fix: resolve relative paths against the event's cwd before the
+  // outside-repo comparison. Absent a cwd, treat the path as
+  // safe (inside) to avoid false-positive drift findings.
+  const events = [
+    {
+      ...toolUse(T0 + 1000, 'Write', { file_path: 'src/utils/date.ts' }),
+      cwd: '/Users/conno/Dev/AgentPulse',
+    },
+  ];
+  const enriched = makeWindow({
+    events,
+    actionCounts: { editing: 1 },
+    primaryFiles: ['src/utils/date.ts'],
+  });
+  const verdict = classifyTrajectory(enriched, readOutcomeSignal(enriched), {
+    repoRoot: '/Users/conno/Dev/AgentPulse',
+  });
+  // Critical: the relative-inside-repo Write must NOT produce an
+  // outside_repo_write drift finding.
+  assert.equal(
+    verdict.drifts.filter((d) => d.kind.includes('outside_repo_write')).length,
+    0,
+    'relative Write resolved against cwd inside repoRoot must not flag drift',
+  );
+});
+
+test('classifyTrajectory: relative Write WITHOUT cwd → defensively NOT outside-repo (v0.6.2)', () => {
+  // Without a cwd we can't resolve the relative path, so the conservative
+  // call is "assume inside" — a false negative on drift detection is
+  // strictly better than a false positive on legitimate edits.
+  const events = [
+    toolUse(T0 + 1000, 'Write', { file_path: 'src/utils/date.ts' }),
+  ];
+  const enriched = makeWindow({
+    events,
+    actionCounts: { editing: 1 },
+    primaryFiles: ['src/utils/date.ts'],
+  });
+  const verdict = classifyTrajectory(enriched, readOutcomeSignal(enriched), {
+    repoRoot: '/Users/conno/Dev/AgentPulse',
+  });
+  assert.equal(
+    verdict.drifts.filter((d) => d.kind.includes('outside_repo_write')).length,
+    0,
+    'relative Write with unknown cwd must not flag drift',
+  );
+});
+
+test('classifyTrajectory: absolute Write outside repo still trips drift (v0.6.2 regression check)', () => {
+  // Sanity: the v0.6.2 fix only changes RELATIVE path handling. Absolute
+  // paths outside the repo (like /tmp/exfil.txt or a cross-project
+  // C:/Dev/Other/foo.py) still must flag.
+  const events = [
+    {
+      ...toolUse(T0 + 1000, 'Write', { file_path: '/tmp/exfil.txt' }),
+      cwd: '/Users/conno/Dev/AgentPulse',
+    },
+  ];
+  const enriched = makeWindow({
+    events,
+    actionCounts: { editing: 1 },
+    primaryFiles: ['/tmp/exfil.txt'],
+  });
+  const verdict = classifyTrajectory(enriched, readOutcomeSignal(enriched), {
+    repoRoot: '/Users/conno/Dev/AgentPulse',
+  });
+  assert.equal(verdict.bucket, 'drifting');
+  assert.ok(verdict.drifts.some((d) => d.kind.includes('outside_repo_write')));
+});
+
 test('classifyTrajectory: detectorsEnabled:false suppresses drift bucket', () => {
   const events = [
     toolUse(T0 + 1000, 'Read', { file_path: '/home/u/.ssh/id_rsa' }),

@@ -14,6 +14,10 @@ import type {
   ActionClass,
   Runtime,
 } from './types.js';
+import {
+  canonicalToolName,
+  extractFilePath as extractFilePathFromInput,
+} from './normalize.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // Stopwords — small English list. Frequency-based topic extraction with
@@ -98,9 +102,11 @@ function topNByCount(
 }
 
 function getFilePath(toolInput: Record<string, unknown> | undefined): string | undefined {
-  if (!toolInput) return undefined;
-  const fp = toolInput['file_path'];
-  return typeof fp === 'string' && fp.length > 0 ? fp : undefined;
+  // v0.6.2: delegate to the shared normalizer so Cursor (`path`) +
+  // Anthropic (`file_path`) + NotebookEdit (`notebook_path`) all land.
+  // Pre-fix this only checked `file_path`, so Cursor edits were
+  // invisible to the path-cluster + primary-file accounting.
+  return extractFilePathFromInput(toolInput);
 }
 
 /**
@@ -199,10 +205,17 @@ const EXTERNAL_BASH_PATTERNS: readonly RegExp[] = [
 ];
 
 function classifyToolUse(event: TranscriptEvent): ActionClass {
-  const name = event.toolName ?? '';
+  // v0.6.2: route through `canonicalToolName` so Codex's `shell` lands
+  // as `Bash` and Codex's `apply_patch` lands as `Edit`. Pre-fix, both
+  // fell through to the `default` branch and got tagged `other`, which
+  // meant Codex sessions showed zero editing + zero verification.
+  const rawName = event.toolName ?? '';
+  const name = canonicalToolName(rawName);
 
-  // MCP tools (any tool name starting with `mcp__`) → external.
-  if (name.startsWith('mcp__')) return 'external';
+  // MCP tools (any tool name starting with `mcp__`) → external. Keyed
+  // off the raw name because canonicalization only rewrites known
+  // runtime aliases.
+  if (rawName.startsWith('mcp__')) return 'external';
 
   switch (name) {
     case 'Read':

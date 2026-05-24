@@ -1,0 +1,9 @@
+{"role":"user","timestamp":"2026-05-23T10:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Fix the date formatter so it handles undefined input"}]}}
+{"role":"assistant","timestamp":"2026-05-23T10:00:30.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Let me look at the utils."},{"type":"tool_use","id":"tu_r1","name":"Read","input":{"path":"src/utils/date.ts"}}]}}
+{"role":"assistant","timestamp":"2026-05-23T10:01:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_e1","name":"Edit","input":{"path":"src/utils/date.ts","old_string":"d.toISOString()","new_string":"d?.toISOString() ?? ''"}}]}}
+{"role":"assistant","timestamp":"2026-05-23T10:01:30.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_b1","name":"Bash","input":{"command":"npm test"}}]}}
+{"role":"user","timestamp":"2026-05-23T10:01:35.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_b1","content":"FAIL src/utils/date.test.ts <exit_code>1</exit_code>"}]}}
+{"role":"assistant","timestamp":"2026-05-23T10:02:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_e2","name":"Edit","input":{"path":"src/utils/date.ts","old_string":"d?.toISOString() ?? ''","new_string":"d == null ? '' : d.toISOString()"}}]}}
+{"role":"assistant","timestamp":"2026-05-23T10:02:30.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_b2","name":"Bash","input":{"command":"npm test"}}]}}
+{"role":"user","timestamp":"2026-05-23T10:02:35.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_b2","content":"PASS src/utils/date.test.ts <exit_code>0</exit_code>"}]}}
+{"role":"user","timestamp":"2026-05-23T10:03:00.000Z","message":{"role":"user","content":[{"type":"text","text":"perfect, that's exactly what I needed"}]}}

@@ -54,6 +54,24 @@
       "minConfidence": 0.3,
       "expectedDriftCount": 0,
       "rationale": "Three edits between T0+30s and T0+2min, then nothing. windowEnd is T0+20min, so last event was ~18min ago — well past the 5min idle threshold."
+    },
+    {
+      "file": "cursor-converging.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "v0.6.2 regression: Cursor uses Anthropic envelope but tool inputs key on `path`, not `file_path`. Pre-fix the enrichment + sequences layers silently dropped Cursor edits — primary-files came up empty and the verdict slipped to exploring/idle. With extractFilePath now checking `path` too, this lands as converging with the green→pass trend."
+    },
+    {
+      "file": "codex-converging.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "v0.6.2 regression: Codex emits `shell` (not `Bash`) for command exec and `apply_patch` (not `Edit`) for filesystem mutation, with arguments JSON-encoded for shell and patch-formatted for apply_patch. Pre-fix every Codex tool call classified as `other`. With canonicalToolName + apply_patch path extraction, the same fail→pass shape now reads as converging."
     }
   ]
 }

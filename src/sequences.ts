@@ -49,6 +49,10 @@ import type {
   SequenceSignal,
   TranscriptEvent,
 } from './types.js';
+import {
+  canonicalToolName,
+  extractFilePath as extractFilePathFromInput,
+} from './normalize.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // Action classification — local copy of the Layer 2 logic, scoped to
@@ -83,7 +87,12 @@ const VERIFICATION_PATTERNS: readonly RegExp[] = [
 
 function classifyEvent(ev: TranscriptEvent): ActionClass | null {
   if (ev.kind !== 'tool_use') return null;
-  const name = ev.toolName ?? '';
+  // v0.6.2: canonicalize so Codex shell + apply_patch register as
+  // verification / editing in the sequence detectors. Pre-fix, every
+  // Codex transcript fell into the `default` branch and returned null
+  // — meaning TDD loops in Codex sessions never fired stuck_loop /
+  // tdd_loop, even when the underlying shape was there.
+  const name = canonicalToolName(ev.toolName);
   switch (name) {
     case 'Read':
     case 'Glob':
@@ -107,10 +116,9 @@ function classifyEvent(ev: TranscriptEvent): ActionClass | null {
 }
 
 function extractFilePath(ev: TranscriptEvent): string | undefined {
-  const input = ev.toolInput;
-  if (!input || typeof input !== 'object') return undefined;
-  const fp = (input as Record<string, unknown>)['file_path'];
-  return typeof fp === 'string' && fp.length > 0 ? fp : undefined;
+  // v0.6.2: delegate to the shared normalizer for cross-runtime
+  // file-path extraction (Cursor `path`, Anthropic `file_path`, etc.).
+  return extractFilePathFromInput(ev.toolInput);
 }
 
 /**

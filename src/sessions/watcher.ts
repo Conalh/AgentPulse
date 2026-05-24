@@ -170,10 +170,17 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
     if (!had) {
       const root = rootForPath(absPath);
       const runtime: Runtime = root ? root.runtime : inferRuntimeFromPath(absPath);
-      const projectName = root
-        ? deriveProjectName(absPath, root.path)
-        : undefined;
+      // v0.6.2: extract cwd FIRST so deriveProjectName can use it as the
+      // junky-slug fallback (matches the discovery.ts order at line ~295).
+      // Pre-fix, codex date-shape slugs like `2026/05/23` on a fresh
+      // file went through deriveProjectName WITHOUT cwd, hitting the
+      // v0.4.6 date-shape branch and returning undefined → row label
+      // fell back to the session-id stub until the next watcher cycle.
+      // Now: same cwd-aware lookup as discovery, immediately on add.
       const cwd = await extractCwdFromFirstLine(absPath);
+      const projectName = root
+        ? deriveProjectName(absPath, root.path, cwd)
+        : undefined;
       const session: DiscoveredSession = {
         id: sessionIdFromPath(absPath),
         runtime,

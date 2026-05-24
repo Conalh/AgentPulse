@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.6.2] — 2026-05-24
+
+### Fixed — multi-runtime adapter drift (Codex external inspection)
+
+The README claimed Claude Code / Cursor / Codex support, and the substrate parsers in `agent-gov-core@1.1.0` do parse all three line formats correctly. But the consumer layers in this package (enrichment, sequences, trajectory) were written against the Anthropic tool vocabulary and silently misclassified Cursor + Codex events.
+
+A Codex inspection (post-v0.6.1) confirmed: running a real Codex fixture through `pulse()` counted both Codex tool calls as `other` — zero editing, zero verification, no primary files. Cursor's `toolInput.path` (vs Anthropic's `toolInput.file_path`) was equally invisible to the enrichment and sequence layers (the trajectory layer already handled both — partial coverage that made the gap easy to miss).
+
+The shape of the fix:
+
+- **New `src/normalize.ts`** centralizes two helpers used wherever a consumer reaches into a `TranscriptEvent`:
+  - `canonicalToolName(name)` maps Codex's `shell` → `Bash` and `apply_patch` → `Edit`. Unknown names pass through verbatim.
+  - `extractFilePath(toolInput)` tries `file_path` / `path` / `filePath` / `notebook_path` in order, plus an `apply_patch` fallback that parses `*** Add File: <path>` / `*** Update File: <path>` markers from the Codex patch body.
+
+- **`src/enrich.ts:classifyToolUse`** routes the toolName through `canonicalToolName` before the switch. `getFilePath` delegates to the shared normalizer.
+- **`src/sequences.ts:classifyEvent`** + `extractFilePath` — same treatment.
+- **`src/trajectory.ts:isVerificationEvent`** accepts canonical `Bash` (so Codex `shell` lands). The Write-shaped drift detector also accepts canonical `Edit` (so Codex `apply_patch` participates).
+- **MCP tool detection** stays keyed off the raw name (canonicalization only rewrites known runtime aliases, not MCP-prefix patterns).
+
+### Fixed — relative paths false-tripped outside-repo drift
+
+`isPathOutsideNormalizedRoot` compared the raw file path against the normalized root. A relative path like `src/utils/date.ts` never starts with `c:/dev/agentpulse/`, so every relative Write triggered the outside-repo detector — a false positive on legitimate edits. Cursor (and Codex's `apply_patch`) emit relative paths constantly.
+
+- **`src/trajectory.ts:isPathOutsideNormalizedRoot`** now accepts an optional `cwd` parameter. New `isAbsolutePath` helper detects Unix `/...` and Windows `C:/...` shapes; relative paths get resolved against the event's `cwd` before comparison. When `cwd` is unavailable, the function defensively returns `false` (NOT outside) — a false negative on drift detection is strictly better than a false positive on legitimate edits.
+
+### Fixed — watcher derived project name before extracting cwd
+
+`src/sessions/watcher.ts` called `deriveProjectName(absPath, root.path)` BEFORE `extractCwdFromFirstLine`, missing the cwd-aware fallback that `src/sessions/discovery.ts` uses. For Codex's date-shaped slugs (`~/.codex/sessions/2026/05/23/...`), a newly-watched session showed worse labels (date stub) until the next discovery cycle picked it up.
+
+- Swapped the call order to match discovery: extract cwd first, pass it into `deriveProjectName`. Three-line fix.
+
+### Fixed — npm tarball missed the README hero image
+
+`package.json` `files` whitelist included `dist`, `LICENSE`, `README.md`, `CHANGELOG.md` — but not `assets/`. The v0.6.1 README references `./assets/dashboard.svg`, so anyone viewing the README on npmjs.com saw a broken image. Added `assets/dashboard.svg` to the whitelist.
+
+### Added — cross-runtime corpus fixtures
+
+The golden corpus (added in v0.6.1) was Claude Code-only, which is exactly why the multi-runtime gap stayed hidden through 222 tests. v0.6.2 adds:
+
+- `test/corpus/cursor-converging.jsonl` — Anthropic envelope with `toolInput.path` instead of `file_path`. Locks in the `extractFilePath` fix.
+- `test/corpus/codex-converging.jsonl` — Codex `response_item` shape with `shell` + `apply_patch`. Locks in the canonical-name + apply_patch-path-extraction fixes.
+
+Both expect `converging` with confidence ≥ 0.6. Pre-fix they would have landed as `exploring` or `idle`.
+
+### Added — targeted relative-path drift tests
+
+Three new tests in `trajectory.test.mjs`:
+
+- Relative Write resolved against cwd inside repoRoot → no drift
+- Relative Write without cwd → no drift (defensive default)
+- Absolute Write outside repo still trips drift (regression check for the v0.6.2 narrowing)
+
+### Tests
+
+227 (was 222). Five new: two corpus scenarios + three trajectory tests.
+
+### Bumped
+
+- Action ref in `README.md` + `examples/agentpulse-pr-check.yml`: `@v0.6.1` → `@v0.6.2`.
+
 ## [0.6.1] — 2026-05-23
 
 The "regression armor" batch — property tests (Gemini #9) + golden replay corpus (Gemini #3). Both items closed the inspection backlog. **Both invisible to users; both immediately earned their keep.**

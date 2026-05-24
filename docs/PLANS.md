@@ -8,14 +8,42 @@ Versions in the "Doing soon" lane aren't promises — they're the
 likely shape of the next ship. Versions in "Watching" are direction,
 not commitment.
 
-Last sweep: 2026-05-24 (post-v0.6.1).
+Last sweep: 2026-05-24 (post-v0.6.2).
 
 ---
 
-## Doing next (v0.6.2 — cleanup batch)
+## Just shipped (v0.6.2 — Codex inspection fixes)
+
+External Codex review caught four real bugs the v0.6.1 corpus + property
+tests missed (because the corpus was Claude Code-only). All four fixed:
+
+- **Multi-runtime adapter drift** — Cursor's `path` + Codex's `shell` /
+  `apply_patch` were silently misclassified. New `src/normalize.ts`
+  centralizes the canonical-name + file-path extraction; threaded
+  through enrich / sequences / trajectory.
+- **Relative paths false-tripped outside-repo drift** — `src/foo.ts`
+  Writes were flagged as drift because the comparison didn't resolve
+  against `cwd`. Now does; absent cwd, defensively treats as inside.
+- **Watcher-vs-discovery project name order** — watcher derived project
+  name before extracting cwd, missing the date-slug fallback. Swapped.
+- **`assets/dashboard.svg` missing from npm tarball** — README image
+  broken on npmjs.com. Added to package.json `files` whitelist.
+
+Plus cross-runtime corpus fixtures (`cursor-converging.jsonl`,
+`codex-converging.jsonl`) to lock the gap closed permanently.
+
+The headline lesson: **the v0.6.1 "regression armor" framing was generous
+because the corpus was monoculture**. A six-fixture corpus that only
+exercises one runtime catches one-runtime bugs. Future corpus growth
+should consciously cover the multi-runtime cross-section.
+
+---
+
+## Doing next (v0.6.3 — cleanup batch, deferred from v0.6.2)
 
 The five items from the post-v0.6.1 internal inspection. All small,
-all closeable in a single focused session.
+all closeable in a single focused session. Deferred to v0.6.3 because
+the Codex inspection findings were correctness bugs that took priority.
 
 ### 1. `## [Unreleased]` header at the top of CHANGELOG.md
 
@@ -116,7 +144,7 @@ leave. Worth a 30-min think-through before v0.7.
 
 ## Doing soon (v0.6.x range)
 
-Things that are clearly the next layer, but not blocking v0.6.2.
+Things that are clearly the next layer, but not blocking v0.6.3.
 
 ### Grow the corpus from real dogfooding surprises
 
@@ -130,6 +158,17 @@ budget. Every time a real session classifies unexpectedly:
 
 Goal: 20 scenarios by v0.7. The growth rate matters more than the
 specific count.
+
+**v0.6.2 meta-lesson — corpus monoculture is a real risk.** The
+original corpus (v0.6.1, six fixtures) was Claude Code-only and
+shipped alongside 222 unit tests + property tests. A Codex external
+inspection (no special tooling, just running the existing parser
+fixture through `pulse()`) caught four bugs the test suite missed —
+because the cross-runtime adapter surface was never exercised
+end-to-end. v0.6.2 added `cursor-converging.jsonl` and
+`codex-converging.jsonl`, but the broader job is to keep the
+multi-runtime cross-section in mind for every new fixture: every
+bucket × every runtime should eventually have a corpus entry.
 
 ### SVG hero re-shoot from real output
 
@@ -195,7 +234,7 @@ If it stays near zero, they're calibrated.
 
 ### Promote one or more duplications into agent-gov-core@1.2.0
 
-Per the v0.6.2 audit. The likely candidates:
+Per the v0.6.3 audit. The likely candidates:
 - `enqueueWrite` — clear substrate primitive (per-path async write
   queue), useful for any tool persisting per-session state.
 - Per-line transcript dispatch — already partially in substrate; the
@@ -313,7 +352,7 @@ one model judge another. That's the credibility story.
 ## Open inspection-derived items (longer arc)
 
 From the four-way external inspection round, things the immediate
-v0.6.2 batch doesn't cover but are worth tracking:
+v0.6.3 batch doesn't cover but are worth tracking:
 
 - **The "agent-gov suite is ambitious surface" warning** — five repos
   with cross-version dependencies. The substrate split helps. Not
@@ -338,9 +377,9 @@ v0.6.2 batch doesn't cover but are worth tracking:
   under Doing soon.
 
 - **`scripts/backfill-releases.mjs` is undocumented** — folded into
-  the `docs/RELEASING.md` work in v0.6.2.
+  the `docs/RELEASING.md` work in v0.6.3.
 
-- **CHANGELOG has no Unreleased header** — folded into v0.6.2.
+- **CHANGELOG has no Unreleased header** — folded into v0.6.3.
 
 ---
 
