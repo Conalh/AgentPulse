@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.5.4] — 2026-05-23
+
+### Added — verdict hysteresis (the "feels smarter" change)
+
+A new bucket must be produced by **two consecutive pulses** before the orchestrator surfaces it. Borderline sessions whose signals sat near a rule threshold used to bounce between buckets every refresh — pill colour flipping, OS notifications double-firing, the dashboard feeling twitchy even when nothing of consequence had changed.
+
+Gemini's external inspection called this the biggest perceived-quality jump for zero new concepts. Same six buckets, same rules — just damped output. Users perceive it as "the dashboard feels intentional" rather than as a new feature.
+
+### How it works
+
+New `src/hysteresis.ts` module — pure, no I/O, no React. Each session in the orchestrator carries a small state:
+
+```ts
+interface HysteresisState {
+  stableBucket: TrajectoryBucket;   // what consumers see
+  pendingBucket: TrajectoryBucket;  // last classifier output if it disagrees
+  pendingCount: number;             // how many pulses in a row
+}
+```
+
+On every pulse the orchestrator runs `applyHysteresis(state, classifier.bucket)`. Three cases:
+
+- **Agreement with stable** → reset pending, no flip
+- **Continuation of pending** → bump count; flip to the new bucket once `pendingCount >= 2`
+- **Fresh disagreement** → start a new candidate with `count = 1` (no flip)
+
+A bounce like `converging → stuck → converging` produces zero pill changes — exactly the noise-suppression we want.
+
+### What's dampened, what's not
+
+Only the bucket label on the pill. The narrative, signals, drift findings, and confidence number stay tied to the latest pulse — so if tests just started failing, the user sees "tests aren't passing" in the narrative on the very next refresh; the pill colour just takes one more refresh to follow.
+
+The narrative is the truth; the pill is the consensus.
+
+### Notifications
+
+The OS notifier reads `state.recap.verdict.bucket` — which is the damped bucket. So notifications get the same dampening for free: only a *confirmed* transition into `drifting` / `stuck` fires the bell. This was the most user-visible flicker source and it's gone.
+
+### The trade-off
+
+Hysteresis applies to **all** transitions, including entries into `drifting`. A session that flips `converging → drifting` takes one extra refresh (default 30 s) to show the warning. The trade-off is: zero false-positive notifications from a noisy pulse vs. ~30 s slower true-positive surfacing.
+
+First-pulse exception: a session that classifies as `drifting` on its very first pulse alerts immediately. The hysteresis state initializes to whatever the first observation is — entries get full credit, only transitions wait.
+
+### Tests
+
+179 (was 168). Eleven new tests in `test/hysteresis.test.mjs` exhaust the state machine: initial entry doesn't dampen, same-bucket pulses clear pending, single disagreements don't flip, two-consecutive confirmations DO flip, three-bucket sequences reset the candidate, and the input state is never mutated.
+
+The orchestrator wiring itself isn't covered by a new integration test — exercising real bucket transitions requires manipulating live transcript fixtures across pulses, which is brittle. The state machine is small enough that unit-test coverage + visual inspection of the wiring (a 25-line block in `runPulse`) is the right depth here.
+
 ## [0.5.3] — 2026-05-23
 
 Six "render calm + correctness" fixes from the external Gemini + Cursor inspections. No new flags, no new public API — the dashboard just feels calmer, more responsive, and more correct.

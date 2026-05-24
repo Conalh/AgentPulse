@@ -20,6 +20,8 @@
 
 import { pulse } from './index.js';
 import { loadAliases } from './aliases.js';
+import { applyHysteresis, initialHysteresis } from './hysteresis.js';
+import type { HysteresisState } from './hysteresis.js';
 import type {
   DiscoveredSession,
   OrchestratorEvent,
@@ -42,6 +44,11 @@ interface InternalState extends SessionState {
    *  pulse piggybacked on the running pulse and got a stale recap — the
    *  dashboard could lag a full refresh cycle behind reality. */
   dirty?: boolean;
+  /** v0.5.4: hysteresis state. The bucket surfaced on `recap.verdict.bucket`
+   *  is the *damped* output of this state machine — a new bucket must be
+   *  produced by 2 consecutive pulses before it replaces the prior one.
+   *  Initialized lazily on the first successful pulse. */
+  hysteresis?: HysteresisState;
 }
 
 const DEFAULT_WINDOW_MS = 20 * 60 * 1000;
@@ -115,7 +122,39 @@ export function createOrchestrator(
       state.error = error;
       // Leave prior recap in place — a transient read failure shouldn't
       // wipe the last good narrative.
-    } else {
+    } else if (recap) {
+      // v0.5.4: hysteresis. The classifier's bucket goes through a small
+      // state machine that requires 2 consecutive pulses agreeing on a
+      // new bucket before flipping. Pre-v0.5.4 a borderline session
+      // (signals sitting near a rule threshold) could bounce between
+      // buckets every refresh; the TUI pill and the notifier both
+      // double-fired off that flicker. Now only the latest pulse's
+      // bucket is exposed when it confirms what we already saw.
+      //
+      // We damp ONLY the bucket on `recap.verdict.bucket`. Narrative,
+      // signals, drifts, and confidence stay tied to the latest pulse —
+      // so the user still sees "tests just started failing" in the
+      // narrative on the very next refresh even when the pill colour
+      // takes one more cycle to follow. The narrative is the truth; the
+      // pill is the consensus.
+      const rawBucket = recap.verdict.bucket;
+      if (!state.hysteresis) {
+        // First successful pulse — initialize. No dampening on entry.
+        state.hysteresis = initialHysteresis(rawBucket);
+      } else {
+        const step = applyHysteresis(state.hysteresis, rawBucket);
+        state.hysteresis = step.state;
+        if (step.stableBucket !== rawBucket) {
+          // Surface the damped bucket. Construct a NEW verdict object so
+          // the original (unmodified) recap stays available to any caller
+          // that might want it later; same shape, just one field changed.
+          recap = {
+            ...recap,
+            verdict: { ...recap.verdict, bucket: step.stableBucket },
+          };
+        }
+      }
+
       state.recap = recap;
       state.error = undefined;
       state.lastUpdated = Date.now();
