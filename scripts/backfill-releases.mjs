@@ -38,6 +38,8 @@ const TITLES = {
   '0.5.6': 'JSON read cache + AGENTPULSE_PROFILE dev mode',
   '0.6.0': 'Incremental transcript parsing — biggest perf win',
   '0.6.1': 'Regression armor — property tests + golden corpus + classifier bug fix',
+  '0.6.2': 'Codex external inspection fixes (cross-runtime file-paths + relative path drift)',
+  '0.7.0': 'Native Antigravity session tracking support',
 };
 
 const VERSIONS = Object.keys(TITLES);
