@@ -8,7 +8,21 @@ Versions in the "Doing soon" lane aren't promises — they're the
 likely shape of the next ship. Versions in "Watching" are direction,
 not commitment.
 
-Last sweep: 2026-05-24 (post-v0.6.2).
+Last sweep: 2026-05-25 (post-v0.7.0).
+
+---
+
+## Just shipped (v0.7.0 — Native Antigravity Session Tracking)
+
+First-class support for Google DeepMind's Antigravity transcript format (`~/.gemini/antigravity/brain`). Integrates seamlessly with the thread-safe `agent-gov-core@1.2.0` substrate parser to provide fully aligned session tracking and live TUI verdict support.
+
+- **Stateless Sequential `toolUseId` Linkage**: Uses the new threadable `activeToolCalls` parameter from the substrate parser to map Antigravity's asymmetrical `replace_file_content` $\leftrightarrow$ `REPLACE_FILE_CONTENT` tools sequentially while avoiding any module-level state.
+- **Empty `assistant_message` Conditionally Pruned**: Automatically checks for empty planner responses and suppresses empty placeholder messages.
+- **`CommandLine` $\to$ `command` Normalization**: Auto-translates Antigravity parameters inside `unwrapArgs` so that existing verifiers and checkers require zero modification downstream.
+- **Cwd-level Path Resolution**: Scans early lines in the session JSONL to locate and extract `Cwd` / `DirectoryPath` / `SearchPath`, and populates the event-level `cwd` for robust drift and relative path analyses.
+- **Exit Code Extraction**: Grounded parsing of the verified `RUN_COMMAND` exit-code shapes (failure, completed successfully, and status error).
+- **Orphan Cleanup**: Integrates memory-safe cleanup inside `parseCache.ts` to prune active tool call mappings once their corresponding events fall out of the cache's active window.
+- **Golden Integration scenario**: Added `antigravity-converging.jsonl` golden replay case to the test corpus to ensure regression protection.
 
 ---
 
@@ -39,11 +53,11 @@ should consciously cover the multi-runtime cross-section.
 
 ---
 
-## Doing next (v0.6.3 — cleanup batch, deferred from v0.6.2)
+## Doing next (v0.7.1 — cleanup batch, deferred from v0.7.0)
 
 The five items from the post-v0.6.1 internal inspection. All small,
-all closeable in a single focused session. Deferred to v0.6.3 because
-the Codex inspection findings were correctness bugs that took priority.
+all closeable in a single focused session. Deferred to v0.7.1 because
+the Antigravity integration correctness took priority.
 
 ### 1. `## [Unreleased]` header at the top of CHANGELOG.md
 
@@ -159,6 +173,8 @@ budget. Every time a real session classifies unexpectedly:
 Goal: 20 scenarios by v0.7. The growth rate matters more than the
 specific count.
 
+Plus, as Antigravity session logs land, we plan to systematically grow the corpus to include the stuck/exploring/done/drifting variants of the Antigravity runtime, dogfooded natively in v0.8.0.
+
 **v0.6.2 meta-lesson — corpus monoculture is a real risk.** The
 original corpus (v0.6.1, six fixtures) was Claude Code-only and
 shipped alongside 222 unit tests + property tests. A Codex external
@@ -243,7 +259,7 @@ Per the v0.6.3 audit. The likely candidates:
 
 Conservative pick: promote `enqueueWrite` only. Per-line dispatch
 stays as parseCache's incremental-friendly variant until a second
-consumer needs it.
+consumer needs it (with full promotion of the incremental tail-read engine targeted as the primary v0.8.0 cleanup).
 
 ---
 

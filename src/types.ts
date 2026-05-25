@@ -13,23 +13,14 @@
  * Layer 5 → PulseRecap                      (narrative + CLI, in src/narrative.ts + src/cli.ts)
  */
 
-import type { Finding, Runtime, TranscriptEvent } from 'agent-gov-core';
+import type { Finding, EventKind, TranscriptEvent as CoreTranscriptEvent } from 'agent-gov-core';
 
-// ─────────────────────────────────────────────────────────────────────
-// Layer 1 — Parser output
-//
-// v0.5.0: re-exported from agent-gov-core@1.1.0 (the canonical home for
-// transcript-event shapes, shared across the gov-suite). Pre-v0.5 these
-// were defined locally; they're kept re-exported here so internal AgentPulse
-// imports don't have to churn and any consumer pinning AgentPulse-as-library
-// keeps working.
-// ─────────────────────────────────────────────────────────────────────
+export type { EventKind };
+export type Runtime = 'claude-code' | 'cursor' | 'codex' | 'antigravity' | 'unknown';
 
-export type {
-  EventKind,
-  Runtime,
-  TranscriptEvent,
-} from 'agent-gov-core';
+export interface TranscriptEvent extends Omit<CoreTranscriptEvent, 'runtime'> {
+  runtime: Runtime;
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Layer 2 — Enrichment output

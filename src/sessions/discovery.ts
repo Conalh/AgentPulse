@@ -41,6 +41,7 @@ export function defaultRoots(): Root[] {
     { path: join(home, '.cursor', 'agent-transcripts'), runtime: 'cursor' },
     { path: join(home, '.codex', 'sessions'), runtime: 'codex' },
     { path: join(home, '.codex', 'projects'), runtime: 'codex' },
+    { path: join(home, '.gemini', 'antigravity', 'brain'), runtime: 'antigravity' },
   ];
 }
 
@@ -59,6 +60,9 @@ export function inferRuntimeFromPath(p: string): Runtime {
   }
   if (lower.includes('.codex') || lower.includes('codex')) {
     return 'codex';
+  }
+  if (lower.includes('.gemini') || lower.includes('antigravity')) {
+    return 'antigravity';
   }
   return 'unknown';
 }
@@ -172,8 +176,7 @@ export function decodeSlug(slug: string): string {
  * a malformed transcript.
  */
 export async function extractCwdFromFirstLine(filePath: string): Promise<string | undefined> {
-  // Open the file and read up to ~64 KB. We only need the first line; reading
-  // a small chunk is cheap and avoids streaming the whole transcript.
+  // Open the file and read up to ~64 KB. We scan early lines to find cwd.
   let handle: FileHandle | undefined;
   try {
     handle = await fs.open(filePath, 'r');
@@ -181,8 +184,43 @@ export async function extractCwdFromFirstLine(filePath: string): Promise<string 
     const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
     if (bytesRead <= 0) return undefined;
     const chunk = buf.slice(0, bytesRead).toString('utf8');
-    const newline = chunk.indexOf('\n');
-    const firstLine = (newline >= 0 ? chunk.slice(0, newline) : chunk).trim();
+    const lines = chunk.split(/\r?\n/).filter(Boolean);
+    if (lines.length === 0) return undefined;
+
+    // Check if it's an Antigravity log format
+    try {
+      const firstParsed = JSON.parse(lines[0]!) as Record<string, unknown>;
+      if (typeof firstParsed.step_index === 'number') {
+        for (const line of lines) {
+          const parsed = JSON.parse(line) as Record<string, any>;
+          if (parsed.tool_calls) {
+            for (const call of parsed.tool_calls) {
+              if (call.args) {
+                let args = call.args;
+                if (typeof args === 'string') {
+                  try { args = JSON.parse(args); } catch {}
+                }
+                if (typeof args === 'object' && args !== null) {
+                  const keys = ['Cwd', 'DirectoryPath', 'SearchPath'];
+                  for (const k of keys) {
+                    const v = args[k];
+                    if (typeof v === 'string') {
+                      let pathVal = v;
+                      if (pathVal.startsWith('"') && pathVal.endsWith('"')) {
+                        try { pathVal = JSON.parse(pathVal); } catch {}
+                      }
+                      return pathVal;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
+    const firstLine = lines[0]!.trim();
     if (!firstLine) return undefined;
     try {
       const parsed = JSON.parse(firstLine) as unknown;

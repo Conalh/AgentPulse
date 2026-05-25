@@ -52,6 +52,20 @@ export function canonicalToolName(name: string | undefined): string {
       return 'Bash';
     case 'apply_patch':
       return 'Edit';
+    // Antigravity mappings
+    case 'list_dir':
+      return 'Glob';
+    case 'view_file':
+      return 'Read';
+    case 'grep_search':
+      return 'Grep';
+    case 'write_to_file':
+      return 'Write';
+    case 'replace_file_content':
+    case 'multi_replace_file_content':
+      return 'Edit';
+    case 'run_command':
+      return 'Bash';
     default:
       return name;
   }
@@ -66,6 +80,10 @@ export function canonicalToolName(name: string | undefined): string {
  *   - `path`      — Cursor
  *   - `filePath`  — some older Cursor versions + custom tools
  *   - `notebook_path` — Anthropic NotebookEdit
+ *   - `DirectoryPath` — Antigravity list_dir
+ *   - `SearchPath` — Antigravity grep_search
+ *   - `TargetFile` — Antigravity write/edit
+ *   - `AbsolutePath` — Antigravity view_file
  *
  * Returns `undefined` when none match or the value isn't a non-empty
  * string. Trajectory layer's `extractFilePath` already had this shape;
@@ -76,10 +94,25 @@ export function extractFilePath(
 ): string | undefined {
   if (!toolInput || typeof toolInput !== 'object') return undefined;
   const record = toolInput as Record<string, unknown>;
-  const candidates = ['file_path', 'path', 'filePath', 'notebook_path'];
+  const candidates = [
+    'file_path',
+    'path',
+    'filePath',
+    'notebook_path',
+    'DirectoryPath',
+    'SearchPath',
+    'TargetFile',
+    'AbsolutePath',
+  ];
   for (const key of candidates) {
     const v = record[key];
-    if (typeof v === 'string' && v.length > 0) return v;
+    if (typeof v === 'string' && v.length > 0) {
+      let pathVal = v;
+      if (pathVal.startsWith('"') && pathVal.endsWith('"')) {
+        try { pathVal = JSON.parse(pathVal); } catch {}
+      }
+      return pathVal;
+    }
   }
 
   // v0.6.2: Codex's `apply_patch` arguments are intentionally not JSON;

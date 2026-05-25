@@ -35,6 +35,7 @@
 
 import { open, stat } from 'node:fs/promises';
 import {
+  coerceTimestamp,
   detectAnthropicRuntime,
   interpolateTimestamps,
   isCodexLine,
@@ -42,8 +43,10 @@ import {
   isRecord,
   parseAnthropicLine,
   parseCodexLine,
+  isAntigravityLine,
+  parseAntigravityLine,
 } from 'agent-gov-core';
-import type { TranscriptEvent } from 'agent-gov-core';
+import type { TranscriptEvent } from './types.js';
 
 interface CacheEntry {
   /** Byte offset JUST PAST the last complete line we've parsed. The next
@@ -56,6 +59,7 @@ interface CacheEntry {
   /** All events parsed so far, kept in chronological order. Pruned by
    *  `readWindowFromCache` to a generous superset of the active window. */
   events: TranscriptEvent[];
+  activeToolCalls?: Map<string, string>;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -156,16 +160,19 @@ export async function readWindowFromCache(
   const completeBlock = lastNewlineIdx >= 0 ? raw.slice(0, lastNewlineIdx + 1) : '';
   const consumedBytes = lastNewlineIdx >= 0 ? lastNewlineIdx + 1 : 0;
 
-  const newEvents = parseLines(completeBlock, silent);
-
   if (!entry) {
     entry = {
       endByteOffset: 0,
       lastMtimeMs: 0,
       lastSize: 0,
       events: [],
+      activeToolCalls: new Map<string, string>(),
     };
+  } else if (!entry.activeToolCalls) {
+    entry.activeToolCalls = new Map<string, string>();
   }
+
+  const newEvents = parseLines(completeBlock, silent, path, entry.activeToolCalls);
 
   entry.events.push(...newEvents);
   entry.endByteOffset = fromOffset + consumedBytes;
@@ -196,6 +203,21 @@ function filterAndPrune(
   const pruneThreshold = since - PRUNE_MARGIN_MS;
   if (entry.events.length > 0 && entry.events[0]!.timestamp < pruneThreshold) {
     entry.events = entry.events.filter((e) => e.timestamp >= pruneThreshold);
+
+    // Prune orphan activeToolCalls to keep memory bounded
+    if (entry.activeToolCalls && entry.activeToolCalls.size > 0) {
+      const liveIds = new Set<string>();
+      for (const e of entry.events) {
+        if (e.toolUseId) {
+          liveIds.add(e.toolUseId);
+        }
+      }
+      for (const [key, toolUseId] of entry.activeToolCalls.entries()) {
+        if (!liveIds.has(toolUseId)) {
+          entry.activeToolCalls.delete(key);
+        }
+      }
+    }
   }
 
   const filtered: TranscriptEvent[] = [];
@@ -223,7 +245,12 @@ function filterAndPrune(
  * Skipped lines (invalid JSON, unrecognized shape) are counted; an
  * aggregate warning is emitted to `console.warn` unless `silent`.
  */
-function parseLines(rawText: string, silent: boolean): TranscriptEvent[] {
+function parseLines(
+  rawText: string,
+  silent: boolean,
+  filePath: string,
+  activeToolCalls?: Map<string, string>
+): TranscriptEvent[] {
   if (rawText.length === 0) return [];
 
   const events: TranscriptEvent[] = [];
@@ -246,6 +273,15 @@ function parseLines(rawText: string, silent: boolean): TranscriptEvent[] {
     // event, so we must route on shape, not on a sticky session flag.
     if (isCodexSessionMeta(parsed) || isCodexLine(parsed)) {
       const out = parseCodexLine(parsed);
+      if (out) {
+        events.push(...out);
+        continue;
+      }
+    }
+
+    // Antigravity support
+    if (isAntigravityLine(parsed)) {
+      const out = parseAntigravityLine(parsed, activeToolCalls);
       if (out) {
         events.push(...out);
         continue;

@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.7.0] — 2026-05-25
+
+### Added — Native Antigravity Session Tracking
+
+Added first-class support for Google DeepMind's Antigravity transcript format (`~/.gemini/antigravity/brain`). Integrates seamlessly with the thread-safe `agent-gov-core@1.2.0` substrate parser to provide fully aligned session tracking and live TUI verdict support.
+
+- **Stateless Sequential `toolUseId` Linkage**: Uses the new threadable `activeToolCalls` parameter from the substrate parser to map Antigravity's asymmetrical `replace_file_content` $\leftrightarrow$ `REPLACE_FILE_CONTENT` tools sequentially while avoiding any module-level state.
+- **Empty `assistant_message` Conditionally Pruned**: Automatically checks for empty planner responses and suppresses empty placeholder messages.
+- **`CommandLine` $\to$ `command` Normalization**: Auto-translates Antigravity parameters inside `unwrapArgs` so that existing verifiers and checkers require zero modification downstream.
+- **Cwd-level Path Resolution**: Scans early lines in the session JSONL to locate and extract `Cwd` / `DirectoryPath` / `SearchPath`, and populates the event-level `cwd` for robust drift and relative path analyses.
+- **Exit Code Extraction**: Grounded parsing of the verified `RUN_COMMAND` exit-code shapes (failure, completed successfully, and status error).
+- **Orphan Cleanup**: Integrates memory-safe cleanup inside `parseCache.ts` to prune active tool call mappings once their corresponding events fall out of the cache's active window.
+- **Golden Integration scenario**: Added `antigravity-converging.jsonl` golden replay case to the test corpus to ensure regression protection.
+
 ## [0.6.2] — 2026-05-24
 
 ### Fixed — multi-runtime adapter drift (Codex external inspection)

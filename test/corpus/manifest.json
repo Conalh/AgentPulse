@@ -72,6 +72,15 @@
       "minConfidence": 0.6,
       "expectedDriftCount": 0,
       "rationale": "v0.6.2 regression: Codex emits `shell` (not `Bash`) for command exec and `apply_patch` (not `Edit`) for filesystem mutation, with arguments JSON-encoded for shell and patch-formatted for apply_patch. Pre-fix every Codex tool call classified as `other`. With canonicalToolName + apply_patch path extraction, the same fail→pass shape now reads as converging."
+    },
+    {
+      "file": "antigravity-converging.jsonl",
+      "endAt": "2026-05-23T10:02:10.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Antigravity TDD loop: exploring directory, editing types.ts, test fails with exit code 1, fixing types.ts, test passes successfully with exit code 0, human says 'perfect, thanks!'."
     }
   ]
 }

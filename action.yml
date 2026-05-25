@@ -116,7 +116,7 @@ runs:
       shell: bash
       working-directory: ${{ github.action_path }}
       # v0.5.5: the action is checked out at the user-pinned git ref
-      # (e.g. `Conalh/AgentPulse@v0.5.5`), so the version field on the
+      # (e.g. `Conalh/AgentPulse@v0.7.0`), so the version field on the
       # ref's own package.json IS the right thing to install from npm.
       # Action ref and npm version stay in lockstep automatically — no
       # hardcoded version string in this file that could drift.
