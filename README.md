@@ -1,6 +1,11 @@
 # AgentPulse
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-supported-7dcfff)](#)
+[![Cursor](https://img.shields.io/badge/Cursor-supported-7dcfff)](#)
+[![Codex](https://img.shields.io/badge/Codex-supported-7dcfff)](#)
+[![No LLM](https://img.shields.io/badge/no_LLM-deterministic-9ece6a)](#)
+[![Local-only](https://img.shields.io/badge/local--only-no_network-9ece6a)](#)
 
 **Live trajectory verdict for AI coding agent sessions. Local-only. No LLM.**
 
