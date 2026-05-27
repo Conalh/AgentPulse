@@ -101,6 +101,30 @@ export function deriveProjectName(
 
   const decoded = slug ? decodeSlug(slug) : undefined;
 
+  // v0.7.1: cwd basename is authoritative when present. The slug encoder
+  // in Claude Code flattens directory separators to `-`, which is lossy
+  // for any project name that itself contains hyphens —
+  // `C--FullStee-nutrition-experiment-lab` decodes via the
+  // last-hyphen-segment rule to `'lab'`, and `C--FullStee-repo-brief`
+  // decodes to `'brief'`. The transcript's first line carries the real
+  // cwd (Claude Code session start, Codex session_meta.payload), so
+  // when we have it, basename(cwd) is the correct answer.
+  //
+  // Subagent-shaped basenames are excluded here — those are tooling
+  // artifacts. Single-letter basenames are also rejected (they're
+  // typically a Windows drive root like `cwd: 'C:\\'`); the existing
+  // junk fallback below handles them via the slug path.
+  if (cwd) {
+    const fromCwd = basename(cwd);
+    if (
+      fromCwd &&
+      !/^[a-z]$/i.test(fromCwd) &&
+      !/^agent-[0-9a-f]{8,}/i.test(fromCwd)
+    ) {
+      return fromCwd;
+    }
+  }
+
   // Fallback: if the decoded slug is junk (empty, single letter that looks
   // like a drive prefix, "C--"-shaped leftover, or — added in v0.4.6 — a
   // date-shape segment from Codex's `~/.codex/sessions/<year>/<month>/<day>/`
@@ -220,22 +244,36 @@ export async function extractCwdFromFirstLine(filePath: string): Promise<string 
       }
     } catch {}
 
-    const firstLine = lines[0]!.trim();
-    if (!firstLine) return undefined;
-    try {
-      const parsed = JSON.parse(firstLine) as unknown;
-      if (parsed && typeof parsed === 'object') {
+    // v0.7.1: scan the first few lines, not just lines[0]. Claude Code
+    // transcripts open with `permission-mode` + `file-history-snapshot`
+    // before any line that carries `cwd` (the user/system messages have
+    // it). The previous "first line only" behaviour missed cwd on every
+    // recent Claude Code session, so the cwd-first project-naming path
+    // (added in v0.7.1) never fired for them and we fell back to the
+    // lossy slug decoder ("lab" instead of "nutrition-experiment-lab").
+    //
+    // Bounded by both line count and byte count so we don't pay for
+    // scanning huge transcripts when cwd is genuinely absent; cwd shows
+    // up well within the first 16 KB / 25 lines on every observed
+    // Claude Code, Codex, and Cursor transcript.
+    const MAX_LINES_TO_SCAN = 25;
+    for (let i = 0; i < Math.min(lines.length, MAX_LINES_TO_SCAN); i++) {
+      const line = lines[i]!.trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line) as unknown;
+        if (!parsed || typeof parsed !== 'object') continue;
         const obj = parsed as Record<string, unknown>;
-        if (typeof obj.cwd === 'string') return obj.cwd;
+        if (typeof obj.cwd === 'string' && obj.cwd.length > 0) return obj.cwd;
         // Codex session_meta wraps cwd inside .payload
         const payload = obj.payload;
         if (payload && typeof payload === 'object') {
           const inner = (payload as Record<string, unknown>).cwd;
-          if (typeof inner === 'string') return inner;
+          if (typeof inner === 'string' && inner.length > 0) return inner;
         }
+      } catch {
+        // Malformed line — skip and keep scanning.
       }
-    } catch {
-      return undefined;
     }
     return undefined;
   } catch {

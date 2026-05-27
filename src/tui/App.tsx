@@ -18,6 +18,7 @@ import type {
 } from '../types.js';
 import { appendExceptions } from '../exceptions.js';
 import { setAlias } from '../aliases.js';
+import { isSubagentTranscript } from '../sessions/subagents.js';
 import { SessionList } from './SessionList.js';
 import { SessionDetail } from './SessionDetail.js';
 import { formatDelta } from './duration.js';
@@ -42,18 +43,12 @@ export interface AppProps {
   showSubagents?: boolean;
 }
 
-/** Subagent-shaped project names — Claude Code stores transcripts of agents
- *  spawned via the SDK under names like `agent-a92e01b8034a7c780`. These
- *  are tooling artifacts, not human-facing sessions. */
-const SUBAGENT_NAME_RE = /^agent-[0-9a-f]{8,}/i;
-
+/** v0.7.1: the SUBAGENT_NAME_RE + isSubagentTranscript predicate now lives in
+ *  src/sessions/subagents.ts so the headless `--once` path (src/once.ts) can
+ *  reuse exactly the same rule. Pre-v0.7.1 only the TUI filtered subagents,
+ *  so `agentpulse live --once` reported each parent session 1+N times. */
 function isSubagentSession(s: SessionState): boolean {
-  const name = s.session.projectName ?? '';
-  if (SUBAGENT_NAME_RE.test(name)) return true;
-  // Also catch the raw-tail fallback case where projectName was empty and the
-  // file's basename UUID would trip the same pattern.
-  const tail = s.session.transcriptPath.split(/[\\/]/).pop() ?? '';
-  return SUBAGENT_NAME_RE.test(tail);
+  return isSubagentTranscript(s.session.projectName, s.session.transcriptPath);
 }
 
 const HELP_LINES = [

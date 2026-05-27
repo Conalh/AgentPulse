@@ -11,3 +11,4 @@
 
 export { discoverSessions } from './discovery.js';
 export { createSessionWatcher } from './watcher.js';
+export { isSubagentTranscript, SUBAGENT_NAME_RE } from './subagents.js';

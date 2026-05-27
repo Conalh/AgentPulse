@@ -164,16 +164,31 @@ function renderConverging(enriched: EnrichedWindow, outcome: OutcomeSignal): str
   return parts.join(' ');
 }
 
-function renderExploring(enriched: EnrichedWindow): string {
+function renderExploring(
+  enriched: EnrichedWindow,
+  verdict: TrajectoryVerdict
+): string {
   const duration = humanDuration(enriched.durationMs);
   const uniqueFileCount = Math.max(
     enriched.primaryFiles.length,
     Object.keys(enriched.pathClusters).length
   );
   const cluster = tick(topCluster(enriched.pathClusters));
-  const parts: string[] = [
-    'Your agent has been exploring for **' + duration + '**.',
-  ];
+  const editCount = enriched.actionCounts.editing ?? 0;
+
+  // v0.7.1: the trajectory classifier has two ways to reach `exploring`.
+  // The high-confidence path (path 5 in trajectory.ts, confidence 0.7)
+  // genuinely fires only when editing === 0 — "no edits yet" is true.
+  // The low-confidence fallback (path 6, confidence 0.3) emits
+  // `exploring` even when there ARE edits, because no other bucket
+  // matched decisively. Pre-fix the narrative claimed "No edits yet —
+  // it's still figuring out the shape" in BOTH cases, so a session
+  // with 20 edits had the narrative directly contradicting its own
+  // signal lines. We now branch on actual edit count.
+  const lede = 'Your agent has been ' +
+    (verdict.confidence <= 0.4 ? 'looking around for' : 'exploring for') +
+    ' **' + duration + '**.';
+  const parts: string[] = [lede];
   if (uniqueFileCount > 0 && cluster) {
     parts.push('It looked at **' + uniqueFileCount + '** files, mostly under **' + cluster + '**.');
   } else if (uniqueFileCount > 0) {
@@ -181,7 +196,18 @@ function renderExploring(enriched: EnrichedWindow): string {
   } else if (cluster) {
     parts.push("It's been reading around **" + cluster + '**.');
   }
-  parts.push("No edits yet — it's still figuring out the shape.");
+  if (editCount === 0) {
+    parts.push("No edits yet — it's still figuring out the shape.");
+  } else {
+    // Edits present but the classifier couldn't decide between
+    // converging / stuck / exploring. Don't pretend it's "still
+    // figuring out the shape" — be honest about the uncertainty so
+    // the human knows to look at it.
+    const editPhrase = editCount === 1 ? '**1** edit' : '**' + editCount + '** edits';
+    parts.push(
+      'Mixed signal: ' + editPhrase + ' in the window but no clear direction yet. Worth a glance.'
+    );
+  }
   return parts.join(' ');
 }
 
@@ -360,7 +386,7 @@ export function renderRecap(
       body = renderConverging(enriched, outcome);
       break;
     case 'exploring':
-      body = renderExploring(enriched);
+      body = renderExploring(enriched, verdict);
       break;
     case 'stuck':
       body = renderStuck(enriched, outcome);

@@ -14,6 +14,7 @@ import { join, sep } from 'node:path';
 
 import { discoverSessions, createSessionWatcher } from '../dist/sessions/index.js';
 import { decodeSlug, deriveProjectName } from '../dist/sessions/discovery.js';
+import { isSubagentTranscript, SUBAGENT_NAME_RE } from '../dist/sessions/subagents.js';
 
 function mkTmp(prefix = 'agentpulse-sessions-') {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -285,4 +286,145 @@ test('deriveProjectName treats Codex date-shape slugs as junky and prefers cwd (
     'project',
     'non-date Codex slug still decodes normally',
   );
+});
+
+// v0.7.1: shared subagent predicate. Replaces an in-file copy that used to
+// live in src/tui/App.tsx; both the TUI and the headless `--once` snapshot
+// path now share this so subagent filtering is consistent.
+test('isSubagentTranscript: matches agent-<hex> project names and basenames (v0.7.1)', () => {
+  // Project name shaped like SDK-spawned subagent.
+  assert.equal(
+    isSubagentTranscript('agent-a92e01b8034a7c780', '/whatever.jsonl'),
+    true,
+  );
+  // Project name absent, basename matches.
+  assert.equal(
+    isSubagentTranscript(undefined, '/some/dir/agent-abd0da0516da5bade.jsonl'),
+    true,
+  );
+  // Structural case — Claude Code's <parent>/subagents/<agent-hex>.jsonl
+  // layout, where the parent's project name leaks through to the child.
+  assert.equal(
+    isSubagentTranscript(
+      'lab', // inherited from parent — subagent inherits parent project name
+      'C:\\Users\\conno\\.claude\\projects\\C--FullStee-lab\\35c8a5a9-914c\\subagents\\agent-ae7833d215098313c.jsonl'
+    ),
+    true,
+    'structural subagents/ path segment marks it as subagent regardless of projectName',
+  );
+  // Plain human session — neither shape matches.
+  assert.equal(
+    isSubagentTranscript('AgentPulse', '/.claude/projects/C--Dev-AgentPulse/abc.jsonl'),
+    false,
+  );
+  // Sanity: regex is exported for callers that need it raw.
+  assert.match('agent-abcdef1234', SUBAGENT_NAME_RE);
+});
+
+// v0.7.1: cwd-first project naming. Pre-fix, slug decoding kept only the
+// last hyphen-separated segment, so any multi-word project name collapsed:
+//   C--FullStee-nutrition-experiment-lab → 'lab'   (should be the full tail)
+//   C--FullStee-repo-brief               → 'brief' (should be 'repo-brief')
+// The transcript's first line carries the real cwd; when present, we now
+// prefer basename(cwd) over the lossy slug decode.
+test('deriveProjectName prefers cwd basename for hyphenated project names (v0.7.1)', () => {
+  const root = '/.claude/projects';
+  // Forward-slash cwds so node:path.basename works on both POSIX (Ubuntu
+  // CI) and Windows runners — production code calls the platform's
+  // basename, so the fixture must use a separator the current platform
+  // recognises. Real Claude Code on Windows DOES write backslash cwds,
+  // and basename strips them correctly on Windows; on Linux the cwd
+  // would always be POSIX-style. The test fixture uses '/' so it's
+  // valid on both.
+
+  // Case A — multi-hyphen project name. Slug-only decode → 'lab', but
+  // the real project is 'nutrition-experiment-lab'.
+  assert.equal(
+    deriveProjectName(
+      '/.claude/projects/C--FullStee-nutrition-experiment-lab/abc-def.jsonl',
+      root,
+      '/FullStee/nutrition-experiment-lab'
+    ),
+    'nutrition-experiment-lab',
+    'multi-hyphen project name decodes via cwd, not the lossy slug rule',
+  );
+
+  // Case B — two-hyphen project name. Slug-only decode → 'brief', but
+  // the real project is 'repo-brief'.
+  assert.equal(
+    deriveProjectName(
+      '/.claude/projects/C--FullStee-repo-brief/16fa.jsonl',
+      root,
+      '/FullStee/repo-brief'
+    ),
+    'repo-brief',
+    'two-hyphen project name decodes via cwd',
+  );
+
+  // Case C — when slug AND cwd basename agree (single-word project),
+  // cwd-first still gives the right answer.
+  assert.equal(
+    deriveProjectName(
+      '/.claude/projects/C--Users-conno-Dev-AgentPulse/xyz.jsonl',
+      root,
+      '/Users/conno/Dev/AgentPulse'
+    ),
+    'AgentPulse',
+  );
+
+  // Case D — cwd basename is a subagent-shaped string. Defensive: we
+  // never use a subagent-looking basename as a project name (would
+  // mislabel the whole project as a tooling artifact).
+  assert.equal(
+    deriveProjectName(
+      '/.claude/projects/C--Users-conno-Dev-MyApp/file.jsonl',
+      root,
+      '/tmp/agent-abc12345def'
+    ),
+    'MyApp',
+    'subagent-shaped cwd basename is rejected, slug path runs',
+  );
+});
+
+// v0.7.1: cwd extraction must scan past metadata-only opening lines.
+// Real Claude Code transcripts open with `permission-mode` and
+// `file-history-snapshot` before any line that carries `cwd`. Pre-fix
+// extractCwdFromFirstLine only inspected lines[0], so cwd was never
+// recovered on these sessions and the project-name fallback chain
+// landed on the lossy slug ("lab" instead of "nutrition-experiment-lab").
+test('discoverSessions: recovers cwd from later lines past permission-mode + file-history-snapshot (v0.7.1)', async () => {
+  const root = mkTmp('agentpulse-cwd-scan-');
+  try {
+    const projDir = join(root, 'C--FullStee-nutrition-experiment-lab');
+    mkdirSync(projDir, { recursive: true });
+    const transcript = join(projDir, '35c8a5a9-914c.jsonl');
+    // Real Claude Code prelude shape: permission-mode is line 1,
+    // file-history-snapshot is line 2, the first cwd-bearing line is the
+    // user message at line 3. Pre-fix the cwd was never seen.
+    // Forward-slash cwd so node:path.basename works on both POSIX
+    // (Ubuntu CI) and Windows runners. Real Claude Code on Windows
+    // writes backslashes; on Linux it writes forward slashes — the
+    // fixture stays on '/' to be valid on both.
+    const lines = [
+      JSON.stringify({ type: 'permission-mode', permissionMode: 'default', sessionId: '35c8a5a9-914c' }),
+      JSON.stringify({ type: 'file-history-snapshot', sessionId: '35c8a5a9-914c' }),
+      JSON.stringify({ type: 'user', cwd: '/FullStee/nutrition-experiment-lab', message: { role: 'user', content: 'hi' } }),
+    ].join('\n') + '\n';
+    writeFileSync(transcript, lines);
+
+    const sessions = await discoverSessions({ roots: [root], staleMs: Infinity });
+    assert.equal(sessions.length, 1);
+    assert.equal(
+      sessions[0].cwd,
+      '/FullStee/nutrition-experiment-lab',
+      'cwd is extracted despite being on line 3, not line 1',
+    );
+    assert.equal(
+      sessions[0].projectName,
+      'nutrition-experiment-lab',
+      'project name uses cwd basename instead of slug-decoded "lab"',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 });

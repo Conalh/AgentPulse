@@ -14,6 +14,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { SessionState } from '../types.js';
+import { computeDisambigSuffixes } from '../labels.js';
 import { colorFor, isLowConfidence, pillFor } from './theme.js';
 import { TimeAgo } from './TimeAgo.js';
 
@@ -100,23 +101,11 @@ export function fallbackLabel(state: SessionState): string {
 const LABEL_COL_WIDTH = 38;
 
 /**
- * v0.4.4: short session-id tail used to disambiguate rows whose
- * `projectName + runtime` combination is identical to another visible row.
- * 6 hex chars is 16M of space — plenty of collision resistance for the
- * ≤10-session list, but still short enough to fit in the label column
- * even on the longest project names without aggressive truncation.
+ * v0.7.1: the disambiguator/collision logic moved to src/labels.ts so
+ * the headless `--once` snapshot can share it. DISAMBIG_ID_LEN is
+ * re-exported via that module. The previous in-file `labelCollisionKey`
+ * helper became internal to src/labels.ts.
  */
-const DISAMBIG_ID_LEN = 6;
-
-/**
- * Returns the key used to detect "two rows look the same." Includes runtime
- * because `core (claude-code)` and `core (cursor)` already look distinct
- * thanks to the runtime suffix — only intra-runtime collisions need an
- * extra tail.
- */
-function labelCollisionKey(label: string, runtime: string): string {
-  return `${label}|${runtime}`;
-}
 
 function SessionListInner({ states, selectedId }: SessionListProps): React.ReactElement {
   if (states.length === 0) {
@@ -128,25 +117,22 @@ function SessionListInner({ states, selectedId }: SessionListProps): React.React
     );
   }
 
-  // v0.4.4: pre-compute label collision counts so we only show the
-  // session-id tail on rows whose project+runtime label appears 2+ times.
-  // Unique rows render exactly as before (no extra visual noise).
-  //
-  // v0.4.7: aliased sessions don't participate in collision counts — when
-  // a session has a user-chosen alias, that name IS the disambiguator and
-  // the hex tail is suppressed. Counting them in would inflate other rows'
-  // collision-count and trigger spurious hex tails on rows that don't need
-  // them.
-  const labelCounts = new Map<string, number>();
-  for (const s of states) {
-    if (s.alias) continue;
-    const key = labelCollisionKey(fallbackLabel(s), s.session.runtime);
-    labelCounts.set(key, (labelCounts.get(key) ?? 0) + 1);
-  }
+  // v0.7.1: collision detection delegated to the shared helper in
+  // src/labels.ts so the headless `--once` snapshot disambiguates by
+  // the same rule. Behaviour is unchanged from v0.4.4/v0.4.7 — unique
+  // rows stay clean, colliding rows get a hex tail, aliased rows
+  // don't participate (the alias IS the disambiguator).
+  const labelInputs = states.map((s) => ({
+    id: s.session.id,
+    projectName: fallbackLabel(s),
+    runtime: s.session.runtime,
+    alias: s.alias,
+  }));
+  const disambigSuffixes = computeDisambigSuffixes(labelInputs);
 
   return (
     <Box flexDirection="column">
-      {states.map((s) => {
+      {states.map((s, idx) => {
         const isSelected = s.session.id === selectedId;
         const bucket = s.recap?.verdict.bucket;
         const confidence = s.recap?.verdict.confidence ?? 0;
@@ -173,14 +159,12 @@ function SessionListInner({ states, selectedId }: SessionListProps): React.React
         // hex-tail disambiguator from v0.4.4 (the alias IS the disambig).
         const alias = s.alias;
 
-        // v0.4.4: when 2+ visible sessions share the same project+runtime
-        // AND neither has an alias, append a short hex tail so the list
-        // isn't three identical-looking rows. Only renders on collision —
-        // unique or aliased rows stay clean.
-        const collisionCount =
-          alias ? 0 : labelCounts.get(labelCollisionKey(label, s.session.runtime)) ?? 1;
-        const showDisambig = !alias && collisionCount >= 2;
-        const disambigSuffix = showDisambig ? ` · ${s.session.id.slice(0, DISAMBIG_ID_LEN)}` : '';
+        // v0.7.1: pull the precomputed suffix from the shared helper.
+        // Empty for unique rows, ` · <hex>` for colliding non-aliased
+        // rows. `showDisambig` is derived from suffix-non-emptiness so
+        // the existing render branches below stay structurally identical.
+        const disambigSuffix = disambigSuffixes[idx]!;
+        const showDisambig = disambigSuffix.length > 0;
 
         // v0.2.3: compute the label truncation budget from the runtime
         // suffix length so the combined column never exceeds LABEL_COL_WIDTH.

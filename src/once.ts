@@ -11,6 +11,8 @@
  */
 
 import { discoverSessions } from './sessions/index.js';
+import { isSubagentTranscript } from './sessions/subagents.js';
+import { computeDisambigSuffixes } from './labels.js';
 import { pulse } from './index.js';
 import { createNotifier } from './notifications.js';
 import type {
@@ -64,6 +66,12 @@ export async function runConcurrent<T>(
 interface SessionSnapshot {
   id: string;
   projectName: string | undefined;
+  /** v0.7.1: display label — `projectName` with a disambiguator appended
+   *  when another visible session shares the same `projectName|runtime`
+   *  key. Mirrors the TUI's v0.4.4 hex-tail behaviour so JSON consumers
+   *  and humans reading the text report can both tell co-named sessions
+   *  apart. When no collision exists, `label === projectName`. */
+  label: string;
   runtime: string;
   transcriptPath: string;
   bucket: TrajectoryBucket | 'pending' | 'error';
@@ -96,10 +104,22 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
   const format = opts.format ?? 'text';
   const strict = opts.strict ?? false;
 
-  const sessions = await discoverSessions({
+  const discovered = await discoverSessions({
     roots: discoveryRoots,
     staleMs,
   });
+
+  // v0.7.1: honour the same `showSubagents` default the TUI applies
+  // (App.tsx). Pre-fix the headless `--once` path emitted every
+  // SDK-spawned subagent transcript as its own row, so a parent session
+  // with N subagents reported `1 + N` rows for the same conceptual
+  // session. The TUI used to be the only surface filtering them.
+  const showSubagents = opts.showSubagents ?? false;
+  const sessions = showSubagents
+    ? discovered
+    : discovered.filter(
+        (s) => !isSubagentTranscript(s.projectName, s.transcriptPath)
+      );
 
   // v0.5.5: parallel session pulses with a concurrency cap. Pre-fix
   // every session was awaited sequentially, so CI runs against artifact
@@ -134,6 +154,10 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
       return {
         id: session.id,
         projectName: session.projectName,
+        // label is filled in by the disambiguation pass below — error
+        // rows still participate so a crashed session doesn't lose its
+        // disambiguator when two errored sessions share a project name.
+        label: session.projectName ?? `session-${session.id.slice(0, 8)}`,
         runtime: session.runtime,
         transcriptPath: session.transcriptPath,
         bucket: 'error',
@@ -150,6 +174,21 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
     sessions.map((s) => () => runOneSession(s)),
     ONCE_CONCURRENCY
   );
+
+  // v0.7.1: compute display labels with the same collision logic the
+  // TUI uses (src/labels.ts). Two visible sessions sharing
+  // `projectName|runtime` get a ` · <hex>` suffix so downstream JSON
+  // consumers and the text report can tell them apart — pre-fix two
+  // co-named rows were indistinguishable in the snapshot.
+  const baseLabels = snapshots.map((s) => ({
+    id: s.id,
+    projectName: s.projectName ?? `session-${s.id.slice(0, 8)}`,
+    runtime: s.runtime,
+  }));
+  const suffixes = computeDisambigSuffixes(baseLabels);
+  for (let i = 0; i < snapshots.length; i++) {
+    snapshots[i]!.label = baseLabels[i]!.projectName + suffixes[i]!;
+  }
 
   const report = buildReport(snapshots);
 
@@ -168,7 +207,10 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
     const notifier = createNotifier({ mode: notifyMode });
     const offenders = report.sessions.filter((s) => GATING_BUCKETS.has(s.bucket));
     const count = offenders.length;
-    const firstLabel = offenders[0]?.projectName ?? `session-${offenders[0]?.id.slice(0, 8) ?? '?'}`;
+    // v0.7.1: use the disambiguated label so a notification body for two
+    // co-named offenders ("AgentPulse: stuck" / "AgentPulse: stuck")
+    // tells you which session.
+    const firstLabel = offenders[0]?.label ?? `session-${offenders[0]?.id.slice(0, 8) ?? '?'}`;
     const body =
       count === 1
         ? `${firstLabel}: ${offenders[0]!.bucket}`
@@ -196,6 +238,10 @@ function snapshotFromRecap(
   return {
     id,
     projectName,
+    // label is replaced by the disambiguation pass after all snapshots
+    // are built; this is the placeholder used if disambiguation is
+    // skipped (e.g. in tests calling snapshotFromRecap directly).
+    label: projectName ?? `session-${id.slice(0, 8)}`,
     runtime,
     transcriptPath,
     bucket: recap.verdict.bucket,
@@ -238,7 +284,9 @@ function renderTextReport(report: OnceReport): string {
   lines.push('');
 
   for (const s of report.sessions) {
-    const label = s.projectName || `session-${s.id.slice(0, 8)}`;
+    // v0.7.1: prefer the disambiguated label over raw projectName so
+    // the text report can be skimmed when two sessions share a name.
+    const label = s.label || s.projectName || `session-${s.id.slice(0, 8)}`;
     const driftSuffix = s.driftCount > 0 ? ` (${s.driftCount} drift)` : '';
     lines.push(`  ${label} [${s.runtime}]  →  ${s.bucket}${driftSuffix}  (confidence ${s.confidence.toFixed(2)})`);
     if (s.error) {

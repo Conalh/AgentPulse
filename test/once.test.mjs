@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { runConcurrent } from '../dist/once.js';
@@ -140,4 +142,101 @@ test('live --format=invalid: usage error, exit 2', () => {
   const r = runCli(['live', '--once', '--format', 'yaml', '--roots', FIXTURES]);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /Invalid --format/);
+});
+
+// v0.7.1: subagent transcripts must be excluded from `--once` output
+// unless --show-subagents is passed. Pre-fix the headless path emitted
+// every SDK-spawned subagent as its own row, so a parent session with
+// N subagents reported `1 + N` rows for the same conceptual session.
+test('live --once: subagent transcripts are filtered by default (v0.7.1)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'agentpulse-once-subagents-'));
+  try {
+    // Mimic the Claude Code on-disk layout:
+    //   <root>/C--Dev-MyApp/<uuid>.jsonl                              ← parent
+    //   <root>/C--Dev-MyApp/<uuid>/subagents/agent-<hex>.jsonl        ← subagent (filtered)
+    const projDir = join(root, 'C--Dev-MyApp');
+    const parentUuid = '35c8a5a9-914c-4e72-8ee9-722cf0acb244';
+    const subagentsDir = join(projDir, parentUuid, 'subagents');
+    mkdirSync(subagentsDir, { recursive: true });
+    const session = JSON.stringify({
+      type: 'session_start',
+      cwd: 'C:\\Dev\\MyApp',
+      timestamp: new Date().toISOString(),
+    }) + '\n';
+    writeFileSync(join(projDir, parentUuid + '.jsonl'), session);
+    writeFileSync(join(subagentsDir, 'agent-ae7833d215098313c.jsonl'), session);
+    writeFileSync(join(subagentsDir, 'agent-abd82563f78ab0fe6.jsonl'), session);
+
+    // Default: subagents filtered → exactly 1 session (the parent).
+    const r = runCli([
+      'live', '--once', '--format', 'json',
+      '--roots', root, '--stale', '999d',
+    ]);
+    assert.equal(r.status, 0, `expected exit 0, got ${r.status}; stderr: ${r.stderr}`);
+    const doc = JSON.parse(r.stdout);
+    assert.equal(doc.sessionCount, 1, 'subagents must not appear in default --once output');
+    assert.doesNotMatch(
+      JSON.stringify(doc.sessions),
+      /agent-[0-9a-f]{8,}/i,
+      'no agent-<hex> transcripts in the snapshot',
+    );
+
+    // With --show-subagents: all 3 appear.
+    const rShow = runCli([
+      'live', '--once', '--format', 'json', '--show-subagents',
+      '--roots', root, '--stale', '999d',
+    ]);
+    assert.equal(rShow.status, 0);
+    const docShow = JSON.parse(rShow.stdout);
+    assert.equal(docShow.sessionCount, 3, '--show-subagents must include them');
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+// v0.7.1: the snapshot's `label` field disambiguates co-named sessions.
+// Two parent sessions sharing the same projectName + runtime now get a
+// ` · <hex>` suffix in `label`, mirroring the TUI's v0.4.4 behaviour.
+// `projectName` itself is preserved for programmatic consumers.
+test('live --once --format json: label disambiguates co-named sessions (v0.7.1)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'agentpulse-once-disambig-'));
+  try {
+    // Two Claude Code projects whose cwd basenames collide. Without
+    // disambiguation the JSON would show two rows labelled identically.
+    const projA = join(root, 'C--Dev-twin-a-MyApp');
+    const projB = join(root, 'C--Dev-twin-b-MyApp');
+    mkdirSync(projA, { recursive: true });
+    mkdirSync(projB, { recursive: true });
+    // Note: cwd basenames are identical → both projectNames resolve to
+    // "MyApp". Forward-slash cwds so node:path.basename works on both
+    // POSIX runners (Ubuntu CI) and Windows — production code uses the
+    // platform's basename, so the fixture must use a separator the
+    // current platform recognises.
+    writeFileSync(
+      join(projA, 'aaa.jsonl'),
+      JSON.stringify({ type: 'session_start', cwd: '/Dev/twin-a/MyApp', timestamp: new Date().toISOString() }) + '\n'
+    );
+    writeFileSync(
+      join(projB, 'bbb.jsonl'),
+      JSON.stringify({ type: 'session_start', cwd: '/Dev/twin-b/MyApp', timestamp: new Date().toISOString() }) + '\n'
+    );
+
+    const r = runCli([
+      'live', '--once', '--format', 'json',
+      '--roots', root, '--stale', '999d',
+    ]);
+    assert.equal(r.status, 0, `expected exit 0, got ${r.status}; stderr: ${r.stderr}`);
+    const doc = JSON.parse(r.stdout);
+    assert.equal(doc.sessionCount, 2);
+    // Both have projectName "MyApp" — the raw field is preserved.
+    assert.ok(doc.sessions.every((s) => s.projectName === 'MyApp'),
+      'projectName is preserved; disambiguation lives in `label`');
+    // Labels must differ — at least one (in practice both) has a ` · <hex>` suffix.
+    const labels = doc.sessions.map((s) => s.label);
+    assert.notEqual(labels[0], labels[1], 'labels must differ when projectName collides');
+    assert.ok(labels.every((l) => /^MyApp( · [0-9a-f]{6})?$/i.test(l)),
+      `labels match the MyApp[ · hex] shape, got: ${JSON.stringify(labels)}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 });

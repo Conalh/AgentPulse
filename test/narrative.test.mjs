@@ -141,6 +141,86 @@ test('exploring: narrative says "exploring" and "no edits yet"', () => {
   assert.match(recap.narrative, /src\/payments/);
 });
 
+// v0.7.1: the trajectory classifier's low-confidence fallback path
+// (confidence 0.3) returns bucket `exploring` even when there ARE edits,
+// because no other bucket matched decisively. Pre-fix the narrative
+// printed "No edits yet — it's still figuring out the shape" regardless
+// of edit count, directly contradicting its own Signals line. This test
+// pins the corrected behaviour.
+test('exploring fallback (confidence 0.3) with edits does NOT say "no edits yet" (v0.7.1)', () => {
+  const enriched = enrichedFixture({
+    topics: [],
+    actionCounts: {
+      exploration: 0,
+      editing: 20,        // 20 edits in window — pre-fix narrative still said "no edits yet"
+      verification: 0,
+      external: 0,
+      navigation: 0,
+      other: 0,
+    },
+    primaryFiles: ['backend/tests/test_foo.py'],
+    pathClusters: { 'backend/tests': 20 },
+    durationMs: 20 * 60_000,
+  });
+  // Mirror the fallback verdict that trajectory.ts emits (path 6).
+  const verdict = verdictFixture({
+    bucket: 'exploring',
+    confidence: 0.3,
+    signals: [
+      '0 exploration / 20 editing actions',
+      'verifications: improving',
+      'user tone: neutral',
+      'no decisive signal — defaulting to exploring',
+    ],
+  });
+  const recap = renderRecap(
+    enriched,
+    outcomeFixture({ verificationTrend: 'improving', userToneTrend: 'neutral' }),
+    verdict
+  );
+  // Must NOT claim no edits — that's the bug.
+  assert.doesNotMatch(
+    recap.narrative,
+    /no edits yet/i,
+    "must not contradict the signal line",
+  );
+  assert.doesNotMatch(
+    recap.narrative,
+    /still figuring out the shape/i,
+    "must not soothe-talk when edits are happening",
+  );
+  // Should reference the actual edit count so the narrative matches
+  // reality. The number is bolded in the narrative (markdown **N**).
+  assert.match(recap.narrative, /\*\*20\*\* edits/);
+  // The auto-prepended "Looks like " hedge from renderRecap (confidence
+  // < 0.5) should also fire — that's the verbal signal to the human
+  // that the verdict is uncertain.
+  assert.match(recap.narrative, /^Looks like/);
+});
+
+// Sanity: the high-confidence exploring path (path 5, confidence 0.7,
+// editing === 0 by construction) still uses the "no edits yet" lede —
+// the fix only branches on edit count, doesn't drop the phrase entirely.
+test('exploring high-confidence (no edits) still says "no edits yet" (v0.7.1)', () => {
+  const enriched = enrichedFixture({
+    topics: [],
+    actionCounts: {
+      exploration: 8,
+      editing: 0,
+      verification: 0,
+      external: 0,
+      navigation: 0,
+      other: 0,
+    },
+    primaryFiles: [],
+    pathClusters: { 'src/lib': 5 },
+    durationMs: 8 * 60_000,
+  });
+  const verdict = verdictFixture({ bucket: 'exploring', confidence: 0.7 });
+  const recap = renderRecap(enriched, outcomeFixture(), verdict);
+  assert.match(recap.narrative, /no edits yet/i);
+});
+
 test("stuck: narrative includes 'try again' tone and 'checking in'", () => {
   const enriched = enrichedFixture({
     actionCounts: {
