@@ -77,7 +77,7 @@ for (const scenario of MANIFEST.scenarios) {
         );
       }
     } finally {
-      rmSync(tmp, { recursive: true, force: true });
+      rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 }

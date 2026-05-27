@@ -30,7 +30,7 @@ function makeFixtureSession(id, label = 'project') {
       projectName: label,
       lastModified: Date.now(),
     },
-    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+    cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
   };
 }
 

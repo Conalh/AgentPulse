@@ -74,7 +74,7 @@ test('discoverSessions with explicit roots finds a JSONL and infers runtime/proj
     assert.equal(session.cwd, '/repo/MyApp');
     assert.ok(typeof session.lastModified === 'number' && session.lastModified > 0);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -98,7 +98,7 @@ test('discoverSessions honors staleMs and skips old files', async () => {
     });
     assert.equal(result2.length, 1);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -134,7 +134,7 @@ test('watcher emits add for a JSONL created after start()', async () => {
     assert.equal(add.session.transcriptPath, transcript);
   } finally {
     await watcher.stop();
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -171,7 +171,7 @@ test('watcher emits change when an existing JSONL is appended', async () => {
     assert.ok(ok, `expected a 'change' event, got: ${JSON.stringify(events)}`);
   } finally {
     await watcher.stop();
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -206,7 +206,7 @@ test('watcher emits remove when a JSONL is unlinked', async () => {
     );
   } finally {
     await watcher.stop();
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 

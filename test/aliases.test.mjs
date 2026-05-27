@@ -31,8 +31,8 @@ test('loadAliases: empty Map when neither home nor cwd file exists', async () =>
     const aliases = await loadAliases({ home, cwd });
     assert.equal(aliases.size, 0);
   } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -50,8 +50,8 @@ test('loadAliases: reads home-only aliases', async () => {
     assert.equal(aliases.get('sess2'), 'CG1');
     assert.equal(aliases.size, 2);
   } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -66,8 +66,8 @@ test('loadAliases: reads cwd-only aliases', async () => {
     const aliases = await loadAliases({ home, cwd });
     assert.equal(aliases.get('sess1'), 'frontend');
   } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -90,8 +90,8 @@ test('loadAliases: cwd file overrides home file on the same session id', async (
     assert.equal(aliases.get('sess3'), 'cwd-only', 'cwd-only key present');
     assert.equal(aliases.size, 3);
   } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -105,8 +105,8 @@ test('loadAliases: malformed JSON in either file → silent skip (load never thr
     const aliases = await loadAliases({ home, cwd });
     assert.equal(aliases.size, 0);
   } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -128,7 +128,7 @@ test('loadAliases: ignores non-string aliases and empty-string keys', async () =
     assert.equal(aliases.has(''), false, 'empty key is rejected');
     assert.equal(aliases.has('sess3'), false, 'empty value is rejected');
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -143,7 +143,7 @@ test('setAlias: creates ~/.agentpulse/ dir and writes a new alias', async () => 
     assert.equal(file.version, 1);
     assert.equal(file.aliases['sess-new'], 'CC1');
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -159,7 +159,7 @@ test('setAlias: updates an existing entry without clobbering others', async () =
     const file = JSON.parse(readFileSync(homeAliasPath(home), 'utf8'));
     assert.deepEqual(file.aliases, { a: 'AA', b: 'BB-renamed', c: 'CC' });
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -184,7 +184,7 @@ test('setAlias: empty / whitespace value deletes the entry', async () => {
     assert.equal(file.aliases.b, undefined);
     assert.deepEqual(file.aliases, {});
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -201,7 +201,7 @@ test('setAlias: refuses to overwrite a malformed existing file', async () => {
     // File contents are unchanged.
     assert.equal(readFileSync(homeAliasPath(home), 'utf8'), 'definitely not json {');
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -212,7 +212,7 @@ test('setAlias: trims whitespace around the alias before storing', async () => {
     const file = JSON.parse(readFileSync(homeAliasPath(home), 'utf8'));
     assert.equal(file.aliases.sess, 'CC1');
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -224,7 +224,7 @@ test('setAlias: empty sessionId throws (caller error)', async () => {
       /sessionId is required/i
     );
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -256,7 +256,7 @@ test('setAlias: concurrent writes do not lose each other (v0.5.2)', async () => 
     assert.equal(file.aliases['sess-e'], 'EEE');
     assert.equal(Object.keys(file.aliases).length, 5, 'all 5 entries present');
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -284,6 +284,6 @@ test('setAlias: a failing write does not block the next caller (v0.5.2)', async 
     const file = JSON.parse(readFileSync(homeAliasPath(home), 'utf8'));
     assert.equal(file.aliases['sess-y'], 'YYY');
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

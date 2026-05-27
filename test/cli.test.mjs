@@ -107,7 +107,7 @@ test('CLI: valid args run the full pipeline against an empty transcript dir', ()
     assert.ok(recap.narrative.length > 0, 'recap.narrative empty');
     assert.equal(recap.enriched.events.length, 0, 'expected zero events for empty dir');
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -132,7 +132,7 @@ test('CLI: AGENTPULSE_PROFILE=1 writes a per-layer timing line to stderr (v0.5.6
     const recap = JSON.parse(r.stdout);
     assert.ok(recap.verdict);
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -148,6 +148,6 @@ test('CLI: profile mode is off when AGENTPULSE_PROFILE is unset (no overhead in 
       'profile line should NOT appear when env var is unset',
     );
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

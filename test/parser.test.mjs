@@ -69,7 +69,7 @@ test('parses Claude Code JSONL with user/tool_use/tool_result roundtrip', async 
     // cwd flows through
     assert.equal(events[0].cwd, '/repo');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -93,7 +93,7 @@ test('parses Cursor JSONL and tolerates missing timestamps', async () => {
     );
     assert.equal(toolUses[1].toolInput.path, 'src/utils/date.ts');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -133,7 +133,7 @@ test('parses Codex JSONL with response_item shape', async () => {
     }
     assert.ok(events[0].timestamp > 0);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -152,7 +152,7 @@ test('honors since/until window and drops zero-timestamp events when windowed', 
     assert.ok(events.every((e) => e.timestamp >= since && e.timestamp <= until));
     assert.ok(events.every((e) => e.runtime === 'codex'));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -168,7 +168,7 @@ test('skips malformed lines without throwing', async () => {
     assert.equal(events[0].kind, 'user_message');
     assert.equal(events[0].text, 'hi');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -190,6 +190,6 @@ test('walks subdirectories and merges results chronologically', async () => {
       'claude-code events should precede codex events when sorted by timestamp'
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

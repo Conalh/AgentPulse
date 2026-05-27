@@ -55,7 +55,7 @@ test('loadExceptions returns empty Set when file is missing', async () => {
     assert.ok(result instanceof Set);
     assert.equal(result.size, 0);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -84,7 +84,7 @@ test('loadExceptions returns fingerprints from a valid file', async () => {
     assert.ok(result.has('abc123'));
     assert.ok(result.has('def456'));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -99,7 +99,7 @@ test('loadExceptions returns empty Set when file is unparseable (silent failure)
     assert.ok(result instanceof Set);
     assert.equal(result.size, 0);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -124,7 +124,7 @@ test('appendExceptions creates the file if missing', async () => {
       assert.ok(typeof entry.approvedAt === 'string' && entry.approvedAt.length > 0);
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -148,7 +148,7 @@ test('appendExceptions dedupes by fingerprint across two writes', async () => {
     assert.ok(loaded.has('first-only'));
     assert.ok(loaded.has('second-only'));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -161,7 +161,7 @@ test('appendExceptions is a no-op when drifts is empty', async () => {
     await appendExceptions(dir, []);
     assert.equal(existsSync(join(dir, EXCEPTIONS_FILE)), false);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -188,7 +188,7 @@ test('loadExceptions accepts a direct file path as well as a directory', async (
     assert.ok(viaDir.has('direct-path-fp'));
     assert.ok(viaFile.has('direct-path-fp'));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -218,6 +218,6 @@ test('appendExceptions: concurrent appends do not lose each other (v0.5.2)', asy
     }
     assert.equal(set.size, 5, 'all 5 fingerprints present');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

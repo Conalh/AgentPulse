@@ -33,7 +33,7 @@ test('readJsonCached: returns whenMissing() for a non-existent path', async () =
     );
     assert.deepEqual(result, { default: true });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -46,7 +46,7 @@ test('readJsonCached: parses and returns on a valid file', async () => {
     const result = await readJsonCached(path, JSON.parse, () => ({}));
     assert.deepEqual(result, { hello: 'world' });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -69,7 +69,7 @@ test('readJsonCached: second call with same mtime hits cache (parser not re-invo
 
     assert.equal(parseCount, 1, 'parser should run exactly once across 3 reads with unchanged mtime');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -91,7 +91,7 @@ test('readJsonCached: mtime change forces a re-read+reparse', async () => {
     const r2 = await readJsonCached(path, JSON.parse, () => ({}));
     assert.equal(r2.v, 'second');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -124,7 +124,7 @@ test('readJsonCached: malformed JSON → whenMissing() and cached as null', asyn
     // the conservative behaviour — better to re-attempt a fixed file.
     assert.ok(parseCount >= 1, 'parser tried at least once');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -146,7 +146,7 @@ test('readJsonCached: missing-file state is cached so we do not re-stat every pu
     // Parser never invoked because the file never existed.
     assert.equal(parseCount, 0);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -162,7 +162,7 @@ test('readJsonCached: a missing file that appears IS detected (stat re-runs on e
     const r2 = await readJsonCached(path, JSON.parse, () => null);
     assert.deepEqual(r2, { appeared: true });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -187,7 +187,7 @@ test('invalidateJsonCache: forces a re-read even when mtime is unchanged', async
     await readJsonCached(path, parser, () => ({}));
     assert.equal(parseCount, 2, 'invalidate forces re-parse');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -215,6 +215,6 @@ test('clearJsonCache: drops all entries', async () => {
     await readJsonCached(b, parser, () => ({}));
     assert.equal(parseCount, 4, 'both paths re-parsed after clear');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

@@ -58,7 +58,7 @@ test('readWindowFromCache: parses an entire file on first call', async () => {
     assert.equal(events[0].text, 'hi');
     assert.equal(events[1].text, 'hello');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -85,7 +85,7 @@ test('readWindowFromCache: second call with no file changes is a cache hit (no r
     // output — so this test mainly guards against the cache breaking the
     // event set on a no-change pulse.
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -110,7 +110,7 @@ test('readWindowFromCache: tail-reads only appended bytes when the file grows', 
       ['first', 'second', 'third', 'fourth'],
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -142,7 +142,7 @@ test('readWindowFromCache: filters events outside the window on each call', asyn
     );
     assert.deepEqual(w2.map((e) => e.text), ['middle', 'future']);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -173,7 +173,7 @@ test('readWindowFromCache: handles an incomplete final line by deferring it to t
     assert.equal(r2[2].text, 'three');
     assert.equal(r2[3].text, 'four');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -204,7 +204,7 @@ test('readWindowFromCache: rotation/truncation (file shrinks) resets the cache a
     assert.equal(r2.length, 2);
     assert.deepEqual(r2.map((e) => e.text), ['after-rotation-a', 'after-rotation-b']);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -218,7 +218,7 @@ test('readWindowFromCache: throws on a missing file (matches parseTranscriptDir 
       /cannot read transcript path/i,
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -236,7 +236,7 @@ test('readWindowFromCache: a file that disappears between pulses throws on the n
       /cannot read transcript path/i,
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -256,7 +256,7 @@ test('evictParseCache: forces a full re-read on the next call', async () => {
     assert.equal(events.length, 2);
     assert.equal(events[0].text, 'one');
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -287,6 +287,6 @@ test('readWindowFromCache: prunes events that fall out of the (extended) window 
     // cached set didn't grow with the ancient event.
     assert.deepEqual(events.map((e) => e.text), ['recent']);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
