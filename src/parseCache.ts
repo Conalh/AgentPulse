@@ -45,6 +45,7 @@ import {
   parseCodexLine,
   isAntigravityLine,
   parseAntigravityLine,
+  extractExitCode,
 } from 'agent-gov-core';
 import type { TranscriptEvent } from './types.js';
 
@@ -271,6 +272,12 @@ function parseLines(
 
     // Codex first — its `default` payload-type branch always returns an
     // event, so we must route on shape, not on a sticky session flag.
+    const codexCustom = parseCodexCustomToolLine(parsed);
+    if (codexCustom) {
+      events.push(...codexCustom);
+      continue;
+    }
+
     if (isCodexSessionMeta(parsed) || isCodexLine(parsed)) {
       const out = parseCodexLine(parsed);
       if (out) {
@@ -317,6 +324,69 @@ function parseLines(
   }
 
   return events;
+}
+
+function parseCodexCustomToolLine(parsed: unknown): TranscriptEvent[] | null {
+  if (!isRecord(parsed) || parsed.type !== 'response_item') return null;
+  const payload = parsed.payload;
+  if (!isRecord(payload)) return null;
+
+  const timestamp = coerceTimestamp(parsed.timestamp) ?? 0;
+  const payloadType = payload.type;
+
+  if (payloadType === 'custom_tool_call') {
+    const name = typeof payload.name === 'string' ? payload.name : undefined;
+    const callId = typeof payload.call_id === 'string' ? payload.call_id : undefined;
+    const input = payload.input;
+    let toolInput: Record<string, unknown> = {};
+
+    if (isRecord(input)) {
+      toolInput = input;
+    } else if (typeof input === 'string') {
+      try {
+        const decoded: unknown = JSON.parse(input);
+        toolInput = isRecord(decoded) ? decoded : { input };
+      } catch {
+        toolInput = name === 'apply_patch' ? { patch: input } : { input };
+      }
+    }
+
+    return [{
+      timestamp,
+      runtime: 'codex',
+      kind: 'tool_use',
+      toolName: name,
+      toolInput,
+      toolUseId: callId,
+      raw: parsed,
+    }];
+  }
+
+  if (payloadType === 'custom_tool_call_output') {
+    const callId = typeof payload.call_id === 'string' ? payload.call_id : undefined;
+    const output = payload.output;
+    const text =
+      typeof output === 'string'
+        ? output
+        : output === undefined
+          ? undefined
+          : JSON.stringify(output);
+    const regexExit = text ? /Exit code:\s*(-?\d+)/i.exec(text) : null;
+    const toolResultExitCode =
+      extractExitCode(output, text) ?? (regexExit ? Number(regexExit[1]) : undefined);
+
+    return [{
+      timestamp,
+      runtime: 'codex',
+      kind: 'tool_result',
+      toolUseId: callId,
+      toolResultText: text,
+      toolResultExitCode,
+      raw: parsed,
+    }];
+  }
+
+  return null;
 }
 
 /**

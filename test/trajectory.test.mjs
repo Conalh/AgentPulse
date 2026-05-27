@@ -493,3 +493,31 @@ test('classifyTrajectory: completion verb beats idle (stale window with completi
   const verdict = classifyTrajectory(enriched, readOutcomeSignal(enriched));
   assert.equal(verdict.bucket, 'done');
 });
+test('readOutcomeSignal: current Codex shell_command verification is recognized', () => {
+  const events = [
+    toolUse(T0 + 1000, 'shell_command', { command: 'npm test' }),
+    toolUse(T0 + 2000, 'shell_command', { command: 'npm run build' }),
+  ];
+  events[0].toolResultExitCode = 0;
+  events[1].toolResultExitCode = 0;
+
+  const o = readOutcomeSignal(makeWindow({ events }));
+  assert.equal(o.verificationTrend, 'flat_pass');
+});
+
+test('classifyTrajectory: done for shipped/pushed signoff language', () => {
+  const events = [
+    toolUse(T0 + 1000, 'shell_command', { command: 'npm test' }),
+    assistantMsg(T0 + 2000, 'Goal 29 is shipped and pushed. Working tree is clean.'),
+  ];
+  events[0].toolResultExitCode = 0;
+  const enriched = makeWindow({
+    events,
+    actionCounts: { verification: 1 },
+    toolInvocationCount: 1,
+  });
+
+  const verdict = classifyTrajectory(enriched, readOutcomeSignal(enriched));
+
+  assert.equal(verdict.bucket, 'done');
+});

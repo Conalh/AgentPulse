@@ -34,6 +34,7 @@ import { classifyTrajectory, readOutcomeSignal } from './trajectory.js';
 import { analyzeSequences } from './sequences.js';
 import { renderRecap } from './narrative.js';
 import { loadExceptions } from './exceptions.js';
+import { readWindowFromCache } from './parseCache.js';
 import type { PulseRecap, TranscriptEvent } from './types.js';
 
 export { loadExceptions, appendExceptions } from './exceptions.js';
@@ -109,11 +110,17 @@ export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
   // incremental-parse path), use them directly and skip the substrate
   // parser. The caller is responsible for window-filtering — we trust
   // the contract documented on PulseOptions.events.
-  const events = opts.events ?? await parseTranscriptDir(opts.transcriptDir, {
-    since: startAt,
-    until: endAt,
-    silent: opts.silent,
-  });
+  const events = opts.events ?? (
+    opts.transcriptDir.toLowerCase().endsWith('.jsonl')
+      ? await readWindowFromCache(opts.transcriptDir, startAt, endAt, {
+          silent: opts.silent,
+        })
+      : await parseTranscriptDir(opts.transcriptDir, {
+          since: startAt,
+          until: endAt,
+          silent: opts.silent,
+        })
+  );
   if (profile) mark('parse', t);
 
   if (profile) t = performance.now();

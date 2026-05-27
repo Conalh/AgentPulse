@@ -49,6 +49,7 @@ export function canonicalToolName(name: string | undefined): string {
   if (!name) return '';
   switch (name) {
     case 'shell':
+    case 'shell_command':
       return 'Bash';
     case 'apply_patch':
       return 'Edit';

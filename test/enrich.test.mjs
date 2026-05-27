@@ -164,6 +164,22 @@ test('action classification: mix of read / edit / bash verify / curl / mcp', () 
 
 // ── 4. Primary files ────────────────────────────────────────────────
 
+test('action classification: current Codex shell_command counts as Bash', () => {
+  const events = [
+    toolUse(100, 'shell_command', { command: 'Get-Content package.json' }, 'codex'),
+    toolUse(200, 'shell_command', { command: 'npm test' }, 'codex'),
+    toolUse(300, 'shell_command', { command: 'git status --short' }, 'codex'),
+  ];
+
+  const e = enrichWindow(events, WSTART, WEND);
+
+  assert.equal(e.actionCounts.verification, 1);
+  assert.equal(e.actionCounts.navigation, 1);
+  assert.equal(e.actionCounts.other, 1);
+  assert.ok(e.uniqueTools.includes('Bash'));
+  assert.ok(e.commandVerbs.includes('npm test'));
+});
+
 test('primary files: top-N by edit count', () => {
   const events = [];
   for (let i = 0; i < 5; i++) {

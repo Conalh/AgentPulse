@@ -329,7 +329,8 @@ export function enrichWindow(
     if (e.kind !== 'tool_use') continue;
 
     toolInvocationCount += 1;
-    if (e.toolName) uniqueToolsSet.add(e.toolName);
+    const toolName = canonicalToolName(e.toolName);
+    if (toolName) uniqueToolsSet.add(toolName);
 
     const fp = getFilePath(e.toolInput);
     if (fp) {
@@ -347,7 +348,7 @@ export function enrichWindow(
       editCounts.set(fp, (editCounts.get(fp) ?? 0) + 1);
     }
 
-    if (e.toolName === 'Bash') {
+    if (toolName === 'Bash') {
       const cmd = String(e.toolInput?.['command'] ?? '');
       const verb = commandVerbOf(cmd);
       if (verb) verbCounts.set(verb, (verbCounts.get(verb) ?? 0) + 1);

@@ -74,6 +74,24 @@
       "rationale": "v0.6.2 regression: Codex emits `shell` (not `Bash`) for command exec and `apply_patch` (not `Edit`) for filesystem mutation, with arguments JSON-encoded for shell and patch-formatted for apply_patch. Pre-fix every Codex tool call classified as `other`. With canonicalToolName + apply_patch path extraction, the same fail→pass shape now reads as converging."
     },
     {
+      "file": "codex-desktop-done.jsonl",
+      "endAt": "2026-05-23T10:18:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "done",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Current Codex Desktop emits `shell_command` for terminal work and often signs off with shipped/pushed/working-tree-clean language. This should classify as done after the idle gap."
+    },
+    {
+      "file": "codex-desktop-custom-converging.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Current Codex Desktop emits apply_patch as response_item/custom_tool_call. It must count as editing so fail-to-pass desktop sessions do not show 0 editing actions."
+    },
+    {
       "file": "antigravity-converging.jsonl",
       "endAt": "2026-05-23T10:02:10.000Z",
       "windowMs": 1200000,

@@ -14,7 +14,10 @@
 
 import type { Finding } from 'agent-gov-core';
 import { fingerprintFinding } from 'agent-gov-core';
-import { canonicalToolName } from './normalize.js';
+import {
+  canonicalToolName,
+  extractFilePath as extractFilePathFromInput,
+} from './normalize.js';
 import type {
   EnrichedWindow,
   OutcomeSignal,
@@ -98,12 +101,16 @@ const COMPLETION_VERBS: RegExp[] = [
   /\bdone\b/i,
   /\bfixed\b/i,
   /\bcompleted\b/i,
+  /\bshipped\b/i,
   /\ball set\b/i,
   /that should do it/i,
   /that's it\b/i,
   /you're set\b/i,
   /\bready to\b/i,
   /now you can\b/i,
+  /\bworking tree is clean\b/i,
+  /\btracked tree is clean\b/i,
+  /\bnothing to commit\b/i,
 ];
 
 /**
@@ -391,14 +398,7 @@ function buildDrift(
 }
 
 function extractFilePath(ev: TranscriptEvent): string | undefined {
-  const input = ev.toolInput;
-  if (!input || typeof input !== 'object') return undefined;
-  const candidate =
-    (input as Record<string, unknown>).file_path ??
-    (input as Record<string, unknown>).path ??
-    (input as Record<string, unknown>).filePath ??
-    (input as Record<string, unknown>).notebook_path;
-  return typeof candidate === 'string' ? candidate : undefined;
+  return extractFilePathFromInput(ev.toolInput);
 }
 
 function detectDrifts(
@@ -452,7 +452,7 @@ function detectDrifts(
       }
     }
 
-    if (ev.toolName === 'Bash') {
+    if (canonicalToolName(ev.toolName) === 'Bash') {
       const cmd = String(
         (ev.toolInput && (ev.toolInput.command as unknown)) ?? ''
       );
@@ -537,7 +537,8 @@ function countEditsTo(events: TranscriptEvent[], filePath: string): number {
   let count = 0;
   for (const ev of events) {
     if (ev.kind !== 'tool_use') continue;
-    if (ev.toolName !== 'Edit' && ev.toolName !== 'Write' && ev.toolName !== 'NotebookEdit') continue;
+    const toolName = canonicalToolName(ev.toolName);
+    if (toolName !== 'Edit' && toolName !== 'Write' && toolName !== 'NotebookEdit') continue;
     const fp = extractFilePath(ev);
     if (!fp) continue;
     if (fp.replace(/\\/g, '/') === target) count += 1;
