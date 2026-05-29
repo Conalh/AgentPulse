@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+## [0.7.1] — 2026-05-28
+
+Session-noise and cross-runtime accuracy pass, driven by real multi-terminal session sets. The TUI had quietly accumulated fixes that the headless `agentpulse live --once` path never inherited, so machine-readable output and `--notify` diverged from what the dashboard showed.
+
+### Fixed — session noise the headless `--once` snapshot missed (#11)
+
+Three dashboard-hygiene rules lived only inside the TUI (`src/tui/App.tsx`, `src/tui/SessionList.tsx`) where the `--once` path couldn't reach them. They are now in shared modules (`src/sessions/subagents.ts`, `src/labels.ts`) and wired into both surfaces:
+
+- **SDK subagents leaked into the snapshot.** The TUI filtered `agent-<hex>.jsonl` subagent transcripts by default (the `--show-subagents` opt-in, since v0.2.3), but `--once` did not. A real session with one `lab` parent + four subagents reported five identical `lab` rows in JSON. `once.ts` now uses the shared `isSubagentTranscript()` predicate — same default-off behaviour, same `--show-subagents` opt-in. The predicate also catches the structural `<parent>/subagents/agent-<hex>.jsonl` layout where the parent's project name leaks into the child.
+- **Co-named sessions were indistinguishable in JSON/notify.** `SessionList` has suffixed colliding `<project>|<runtime>` rows with ` · <hex>` since v0.4.4, but `--once` emitted bare `projectName`. Two parallel `AgentPulse` sessions (e.g. one Claude Code, one Codex) couldn't be told apart in output or notifications. A new `label` field on the snapshot carries the disambiguated string via the shared `computeDisambigSuffixes()` helper; `projectName` is preserved unchanged for existing programmatic consumers, and `--notify` bodies now use `label`.
+
+### Fixed — project names were systematically wrong on multi-word Claude Code projects (#11)
+
+`decodeSlug`'s last-hyphen-segment rule is structurally lossy: a slug like `C--FullStee-nutrition-experiment-lab` can't be split back into prefix + project because hyphens are both path-separator encodings and legal name characters, so every multi-word project decoded to its last segment (`lab`, `brief`, …). The transcript's first line carries the authoritative cwd, so naming now prefers `basename(cwd)` and falls back to slug-decode only when cwd is absent. Compounding it, `extractCwdFromFirstLine` was strictly first-line-only — but Claude Code transcripts open with `permission-mode` / `file-history-snapshot` lines before the first cwd-bearing message, so the cwd-first path never ran. It now scans up to 25 lines / 64 KB. A subagent-shaped cwd basename (`agent-<hex>`) is rejected so a project is never mislabelled as a tooling artifact.
+
+### Fixed — `exploring` narrative contradicted its own signals (#11)
+
+The low-confidence `exploring` fallback (`trajectory.ts:799`) fires regardless of edit count, but the narrative renderer unconditionally appended *"No edits yet — it's still figuring out the shape."* A session with 20 edits in the window directly contradicted its Signals line. `renderExploring` now branches on edit count and emits an honest hedge (*"Mixed signal: N edits in the window but no clear direction yet"*) when the fallback fires with edits present.
+
+### Fixed — current Codex desktop session format
+
+Recognizes the current Codex desktop transcript shape, including `custom_tool_call` / `custom_tool_call_output` events that the substrate parser doesn't yet model, so Codex desktop sessions classify (editing / verification / drift) instead of falling through to `other`. Adds `codex-desktop-*` golden corpus fixtures.
+
+### Bumped — agent-gov-core `^1.2.1`
+
+v0.7.0 pinned `^1.2.0` against an unpublished substrate version, so `npm ci` hit `ETARGET` in CI. Substrate has since shipped v1.2.0 + v1.2.1 (streaming reader patch on top of the Antigravity parser); the caret now matches the registry.
+
+### Tests
+
+240 tests pass (up from 228 at v0.7.0). New coverage for subagent filtering (both directions), co-named disambiguation, cwd-first naming across the metadata prelude, the `exploring`-with-edits narrative branch, and Codex desktop classification. Windows CI flake fixed by adding `maxRetries`/`retryDelay` to ~60 recursive `rmSync` teardowns (lazy handle release intermittently threw `ENOTEMPTY`/`EBUSY`).
+
 ## [0.7.0] — 2026-05-25
 
 ### Added — Native Antigravity Session Tracking
