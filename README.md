@@ -169,7 +169,7 @@ Best-effort: missing OS notification utilities are a silent no-op rather than a 
 ### GitHub Action
 
 ```yaml
-- uses: Conalh/AgentPulse@v0.7.2
+- uses: Conalh/AgentPulse@v0.7.3
   with:
     transcript-dirs: agentpulse-transcripts
     strict: 'true'

@@ -9,6 +9,11 @@ and add the title to scripts/backfill-releases.mjs so the GitHub Release can
 be cut from this section. See docs/RELEASING.md.
 -->
 
+## [0.7.3] — 2026-05-28
+
+### Internal
+- Bumped `agent-gov-core` dependency `^1.2.1` → `^1.3.0` to align with the rest of the suite (all five detectors are on `^1.3.0`). No behavior change — AgentPulse uses core's transcript parsers and the `Finding`/`Report` contract, all unchanged across 1.2.1→1.3.0; the 1.3.0 additions (diff-input guards) are for PR-diff detectors and aren't on AgentPulse's path. Verdicts and report output are unchanged. Takes effect for the Action once `@conalh/agentpulse@0.7.3` is published to npm.
+
 ## [0.7.2] — 2026-05-28
 
 A correctness-and-consistency pass across the classifier pipeline and the TUI. Several rules silently mis-fired on real (non-synthetic) sessions — duplicated verification vocabulary across three layers, a `stuck_loop` that never triggered on actual transcripts, prose-only sessions flagged as `stuck`, and an incremental parser that double-counted events on any non-ASCII transcript — alongside internal de-duplication of constants/namespaces and two TUI render/label fixes.
