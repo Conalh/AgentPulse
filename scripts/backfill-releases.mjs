@@ -42,6 +42,7 @@ const TITLES = {
   '0.7.0': 'Native Antigravity session tracking support',
   '0.7.2': 'Classifier + parse-cache correctness pass (multibyte fix, dedup, fewer false positives)',
   '0.7.3': 'Normalize agent-gov-core dependency to ^1.3.0',
+  '0.8.0': 'Headless --once parity (hide-idle/max-sessions), fail-closed CI gate, and hardening',
 };
 
 const VERSIONS = Object.keys(TITLES);

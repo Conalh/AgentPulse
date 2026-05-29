@@ -9,7 +9,7 @@ and add the title to scripts/backfill-releases.mjs so the GitHub Release can
 be cut from this section. See docs/RELEASING.md.
 -->
 
-## [Unreleased]
+## [0.8.0] — 2026-05-29
 
 A correctness-and-hardening pass driven by an external code review. The headless `agentpulse live --once` path (the form the GitHub Action runs) is brought in line with the TUI and the inputs the Action already documented; the strict CI gate no longer passes when its own analysis crashed; the macOS notifier escaping is fixed; and discovery gains cost bounds while the report gains an opt-in redaction layer. Detector scope, the Action's supply-chain model, and the CI output's privacy surface are now documented honestly instead of being overstated or left implicit.
 
