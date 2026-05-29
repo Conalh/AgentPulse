@@ -261,6 +261,17 @@ export interface DiscoverOptions {
   /** Skip sessions whose lastModified is older than this many ms ago.
    *  Default: 1 hour (DEFAULT_STALE_MS). Use Infinity to disable. */
   staleMs?: number;
+  /** Maximum directory depth to descend below each root when walking for
+   *  `.jsonl` transcripts. The root itself is depth 0, its immediate
+   *  children depth 1, etc. `undefined` (the default) means unbounded.
+   *  A bound keeps a broad `--roots` (or a CI artifact dir with deep
+   *  history) from incurring an unbounded recursive walk + stat-per-file. */
+  maxDepth?: number;
+  /** Directory basenames to skip entirely during the walk (never descended
+   *  into). Case-insensitive exact-segment match. Useful for pruning heavy
+   *  trees that can't hold transcripts (`node_modules`, `.git`, etc.).
+   *  Default: none. */
+  excludeDirs?: string[];
 }
 
 /**
@@ -363,6 +374,9 @@ export interface PulseOrchestrator {
 // TUI (Workstream C)
 // ─────────────────────────────────────────────────────────────────────
 
+/** Redaction level for headless `--once` output. See `LiveOptions.redact`. */
+export type RedactMode = 'none' | 'paths' | 'all';
+
 export interface LiveOptions {
   /** Window for each session's recap. Default: 20 min. */
   windowMs?: number;
@@ -407,6 +421,28 @@ export interface LiveOptions {
    *  `drifting` or `stuck`, the process exits 1 instead of 0. Only honored
    *  in `--once` mode (the interactive TUI ignores it). */
   strict?: boolean;
+  /** Fail closed on infrastructure errors. When true AND `strict`, a session
+   *  that threw during analysis (bucket `error` — unreadable/corrupt
+   *  transcript, parser failure) also forces exit 1, instead of the
+   *  fail-open default where a broken transcript passes the gate. Only
+   *  honored in `--once` mode. Default: false (advisory) for the bare CLI;
+   *  the GitHub Action defaults its `fail-on-error` input to true so a
+   *  governance gate can't silently pass when its own analysis crashed. */
+  failOnError?: boolean;
+  /** Redact transcript-derived content from `--once` output (the surface
+   *  that reaches the GitHub step summary / PR comment). `'none'` (default)
+   *  emits everything; `'paths'` reduces file paths and path clusters in
+   *  narratives, signals, and the transcript path to basenames; `'all'`
+   *  additionally drops narratives and signals, leaving only label, bucket,
+   *  confidence, and drift count. Applies to both `text` and `json`. */
+  redact?: RedactMode;
+  /** Maximum directory depth to descend below each discovery root. See
+   *  `DiscoverOptions.maxDepth`. Threaded through to discovery + the
+   *  watcher. Default: unbounded. */
+  maxDepth?: number;
+  /** Directory basenames to skip during discovery. See
+   *  `DiscoverOptions.excludeDirs`. Default: none. */
+  excludeDirs?: string[];
   /** v0.4.2: local-notification mode for state-transition alerts. Fires when
    *  a session flips INTO `drifting` or `stuck`. Default: `'none'` —
    *  notifications are opt-in because they're nag-prone. See

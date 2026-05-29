@@ -100,8 +100,11 @@ function extractFilePath(ev: TranscriptEvent): string | undefined {
  *   - toolResultExitCode === 0, OR
  *   - no exit code present but result text matches a pass pattern and not a
  *     fail pattern.
- * "Failed" is the converse. `null` = indeterminate; treat as fail for the
- * stuck_loop check (conservative — if we can't tell, assume the worst).
+ * "Failed" is the converse. `null` = indeterminate (no exit code and the
+ * result text matched neither table). `detectStuckLoop` counts only clear
+ * failures (`passed === false`) toward a stuck cycle, so an indeterminate
+ * outcome never inflates the stuck signal — the conservative direction
+ * given how broad result text can be.
  */
 function verificationPassed(ev: TranscriptEvent): boolean | null {
   if (typeof ev.toolResultExitCode === 'number') {

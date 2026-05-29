@@ -66,8 +66,40 @@ inputs:
       Cap on number of sessions to display in the summary (sorted by
       lastModified DESC). 0 disables the cap. CI runs often have a lot of
       historical transcripts; the default keeps the summary readable.
+      Display-only: gating still considers every analyzed session, so a
+      drifting/stuck session below the cap still fails the build.
     required: false
     default: '20'
+  fail-on-error:
+    description: >-
+      When 'true' (and strict: true), also fail the workflow if any session
+      could not be analyzed (unreadable / corrupt transcript, parser error).
+      Stops a governance gate from passing silently when its own analysis
+      never ran. Set 'false' to keep analysis errors advisory.
+    required: false
+    default: 'true'
+  redact:
+    description: >-
+      Redact transcript-derived content from the step summary / PR comment
+      (and the JSON snapshot): 'none' (default), 'paths' (reduce file paths
+      and path clusters to basenames), or 'all' (also drop narratives and
+      signals). Use when transcripts may contain sensitive paths, prompts, or
+      project names and the output destination isn't fully trusted.
+    required: false
+    default: 'none'
+  max-depth:
+    description: >-
+      Limit how deep AgentPulse recurses below each transcript dir when
+      discovering .jsonl files. Unbounded by default; set a small value when
+      pointing at a broad directory to bound discovery I/O.
+    required: false
+    default: ''
+  exclude:
+    description: >-
+      Comma-separated directory names to skip during discovery (e.g.
+      'node_modules,.git'). Empty by default.
+    required: false
+    default: ''
   comment-on-pr:
     description: >-
       When 'true' and the workflow is running on a `pull_request` event,
@@ -99,6 +131,9 @@ outputs:
   stuck-count:
     description: Number of sessions in the `stuck` bucket.
     value: ${{ steps.run.outputs.stuck-count }}
+  error-count:
+    description: Number of sessions that failed to analyze (bucket `error`).
+    value: ${{ steps.run.outputs.error-count }}
   json-report-path:
     description: Filesystem path of the JSON snapshot written by the action.
     value: ${{ steps.run.outputs.json-report-path }}
@@ -138,6 +173,10 @@ runs:
         AP_HIDE_IDLE: ${{ inputs.hide-idle }}
         AP_SHOW_SUBAGENTS: ${{ inputs.show-subagents }}
         AP_MAX_SESSIONS: ${{ inputs.max-sessions }}
+        AP_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        AP_REDACT: ${{ inputs.redact }}
+        AP_MAX_DEPTH: ${{ inputs.max-depth }}
+        AP_EXCLUDE: ${{ inputs.exclude }}
       run: |
         set -euo pipefail
 
@@ -151,6 +190,17 @@ runs:
         # `--yes` suppresses the install-confirm prompt npx asks in
         # interactive shells; CI is non-interactive so it's a no-op
         # there, but we keep it for clarity.
+        #
+        # SUPPLY CHAIN / TRUST BOUNDARY (#F3): this executes the PUBLISHED
+        # npm artifact @conalh/agentpulse@<version>, NOT the checked-out
+        # action source. Pinning Conalh/AgentPulse@<ref> pins only the
+        # version STRING (resolved above from the ref's package.json); the
+        # code that actually runs — and its semver-compatible dependencies
+        # (e.g. agent-gov-core ^1.x, which owns transcript parsing and
+        # finding fingerprints) — resolves fresh from the npm registry at
+        # run time. The npm registry + those floating deps are therefore in
+        # your trust boundary. For a fully reproducible supply chain, pin to
+        # an exact AgentPulse version and vet the published package.
         cli=(npx --yes "@conalh/agentpulse@${AP_VERSION}")
 
         args=(live --once)
@@ -172,6 +222,15 @@ runs:
           args+=(--show-subagents)
         fi
         args+=(--max-sessions "$AP_MAX_SESSIONS")
+        if [ -n "$AP_REDACT" ] && [ "$AP_REDACT" != "none" ]; then
+          args+=(--redact "$AP_REDACT")
+        fi
+        if [ -n "$AP_MAX_DEPTH" ]; then
+          args+=(--max-depth "$AP_MAX_DEPTH")
+        fi
+        if [ -n "$AP_EXCLUDE" ]; then
+          args+=(--exclude "$AP_EXCLUDE")
+        fi
 
         # Two passes: one JSON (parsed + uploaded), one text (human summary).
         # AgentPulse exits 1 on `--strict` + drifting/stuck; we don't pass
@@ -188,11 +247,13 @@ runs:
         session_count="$(node -e "const fs = require('node:fs'); const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(d.sessionCount ?? 0)" "$report_json")"
         drifting_count="$(node -e "const fs = require('node:fs'); const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(d.bucketCounts?.drifting ?? 0)" "$report_json")"
         stuck_count="$(node -e "const fs = require('node:fs'); const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(d.bucketCounts?.stuck ?? 0)" "$report_json")"
+        error_count="$(node -e "const fs = require('node:fs'); const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(d.bucketCounts?.error ?? 0)" "$report_json")"
 
         echo "gating-finding=$gating_finding" >> "$GITHUB_OUTPUT"
         echo "session-count=$session_count" >> "$GITHUB_OUTPUT"
         echo "drifting-count=$drifting_count" >> "$GITHUB_OUTPUT"
         echo "stuck-count=$stuck_count" >> "$GITHUB_OUTPUT"
+        echo "error-count=$error_count" >> "$GITHUB_OUTPUT"
         echo "json-report-path=$report_json" >> "$GITHUB_OUTPUT"
 
         # Stream the text report into the step summary so reviewers see it
@@ -207,12 +268,24 @@ runs:
           } >> "$GITHUB_STEP_SUMMARY"
         fi
 
-        # Apply --strict gating. The agentpulse CLI itself sets exit 1 when
+        # Apply gating. The agentpulse CLI itself sets exit 1 when
         # strict+gating; we mirror that here for the workflow check. We use
-        # the JSON-parsed field rather than the CLI exit code so this still
+        # the JSON-parsed fields rather than the CLI exit code so this still
         # works when strict was set via the input flag.
+        gate_fail=0
         if [ "$AP_STRICT" = "true" ] && [ "$gating_finding" = "true" ]; then
           echo "::error::AgentPulse found $drifting_count drifting and $stuck_count stuck session(s)."
+          gate_fail=1
+        fi
+        # #F2: fail closed on infrastructure errors. Pre-fix, a run of only
+        # unreadable/corrupt transcripts (bucket `error`) passed the gate
+        # silently — the governance check went green though analysis never
+        # ran. With fail-on-error (default true), that's a build failure.
+        if [ "$AP_STRICT" = "true" ] && [ "$AP_FAIL_ON_ERROR" = "true" ] && [ "${error_count:-0}" -gt 0 ]; then
+          echo "::error::AgentPulse could not analyze $error_count session(s) (unreadable/corrupt transcript). Failing the gate (fail-on-error). Set fail-on-error: false to make this advisory."
+          gate_fail=1
+        fi
+        if [ "$gate_fail" = "1" ]; then
           exit 1
         fi
 

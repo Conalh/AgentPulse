@@ -12,7 +12,20 @@ import assert from 'node:assert/strict';
 import {
   createNotifier,
   shouldNotify,
+  __testables,
 } from '../dist/notifications.js';
+
+const { escapeAppleScriptStringLiteral, clampNotificationText } = __testables;
+
+/** True if `s` contains any ASCII control char (code < 0x20 or DEL 0x7F).
+ *  Written with char codes so the test file carries no literal control bytes. */
+function hasControlChar(s) {
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    if (c < 0x20 || c === 0x7f) return true;
+  }
+  return false;
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // stderr capture helpers (used by the bell-mode test). We monkey-patch
@@ -199,4 +212,56 @@ test('stop(): is callable and idempotent on all modes', () => {
     n.stop();
     n.stop();
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// #F7 — AppleScript string-literal escaping. The macOS `os` branch builds a
+// single `display notification "<body>" with title "<title>"` expression
+// from transcript-derived text (ultimately basename(cwd), unsanitized).
+// Pre-fix it escaped ONLY `"`, so a label ending in a backslash, or one
+// containing a raw newline, could break out of the string literal — an
+// AppleScript-injection / breakage vector. We test the escaper directly.
+// ─────────────────────────────────────────────────────────────────────
+
+test('escapeAppleScriptStringLiteral: double quotes are escaped', () => {
+  assert.equal(escapeAppleScriptStringLiteral('a"b'), 'a\\"b');
+});
+
+test('escapeAppleScriptStringLiteral: a trailing backslash is doubled, not left to eat the close quote', () => {
+  // Input is a single trailing backslash. Pre-fix: the closing `"` after it
+  // became an escaped quote so the literal never closed. Now the backslash
+  // is doubled so the close quote stands alone.
+  const out = escapeAppleScriptStringLiteral('proj\\');
+  assert.equal(out, 'proj\\\\');
+  const assembled = `"${out}"`;
+  assert.equal(assembled, '"proj\\\\"');
+});
+
+test('escapeAppleScriptStringLiteral: newlines and other control chars become spaces', () => {
+  const out = escapeAppleScriptStringLiteral('line1\nline2\r\tend x');
+  assert.equal(hasControlChar(out), false, 'no control chars survive');
+  assert.equal(out, 'line1 line2  end x');
+});
+
+test('escapeAppleScriptStringLiteral: an injection-shaped label cannot break out', () => {
+  // A label crafted to escape the literal and run a shell command.
+  const malicious = '\\" & (do shell script "touch /tmp/pwned") & "';
+  const out = escapeAppleScriptStringLiteral(malicious);
+  // Every double-quote in the output is backslash-escaped (no bare `"`), and
+  // there are no control chars — so dropped into `"<out>"` the payload stays
+  // inert string data.
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] === '"') {
+      assert.equal(out[i - 1], '\\', `quote at ${i} must be escaped`);
+    }
+  }
+  assert.equal(hasControlChar(out), false);
+});
+
+test('clampNotificationText: long input is truncated with an ellipsis', () => {
+  const long = 'x'.repeat(5000);
+  const out = clampNotificationText(long);
+  assert.ok(out.length <= 200, `expected <= 200, got ${out.length}`);
+  assert.ok(out.endsWith('…'));
+  assert.equal(clampNotificationText('short'), 'short');
 });

@@ -27,12 +27,14 @@ import type {
   WatcherOptions,
 } from '../types.js';
 import {
+  buildWalkLimits,
   defaultRoots,
   deriveProjectName,
   discoverSessions,
   extractCwdFromFirstLine,
   inferRuntimeFromPath,
   sessionIdFromPath,
+  type WalkLimits,
 } from './discovery.js';
 
 const DEFAULT_DEBOUNCE_MS = 300;
@@ -59,11 +61,14 @@ async function safeStat(filePath: string): Promise<{ mtimeMs: number; size: numb
   }
 }
 
-async function listJsonl(dir: string): Promise<string[]> {
+async function listJsonl(dir: string, limits: WalkLimits): Promise<string[]> {
   const out: string[] = [];
-  const stack = [dir];
+  // Track depth alongside each pending dir so the same maxDepth / exclude
+  // bounds the polling scan that discovery.walkJsonl applies — a broad
+  // root shouldn't trigger an unbounded recursive re-scan every poll tick.
+  const stack: Array<{ dir: string; depth: number }> = [{ dir, depth: 0 }];
   while (stack.length > 0) {
-    const cur = stack.pop()!;
+    const { dir: cur, depth } = stack.pop()!;
     let entries: import('node:fs').Dirent[];
     try {
       entries = await fs.readdir(cur, { withFileTypes: true });
@@ -73,7 +78,9 @@ async function listJsonl(dir: string): Promise<string[]> {
     for (const ent of entries) {
       const full = join(cur, ent.name);
       if (ent.isDirectory()) {
-        stack.push(full);
+        if (depth >= limits.maxDepth) continue;
+        if (limits.exclude.has(ent.name.toLowerCase())) continue;
+        stack.push({ dir: full, depth: depth + 1 });
       } else if (ent.isFile() && isJsonlPath(ent.name)) {
         out.push(full);
       }
@@ -86,6 +93,9 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
   const debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const discoverOpts = opts.discover ?? {};
+  // Same depth/exclude bounds the one-shot discovery applies, so polling
+  // mode doesn't re-walk an unbounded tree every interval.
+  const walkLimits = buildWalkLimits(discoverOpts);
 
   // Resolve roots once. We don't re-resolve later — the contract says the
   // watcher watches "the roots", not "wherever the user moves them to".
@@ -226,7 +236,7 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
 
   async function pollScan(root: ResolvedRoot): Promise<void> {
     if (stopping) return;
-    const files = await listJsonl(root.path);
+    const files = await listJsonl(root.path, walkLimits);
     const seen = new Set<string>();
     for (const f of files) {
       const abs = resolve(f);

@@ -19,6 +19,7 @@ import { createNotifier } from './notifications.js';
 import type {
   LiveOptions,
   PulseRecap,
+  RedactMode,
   TrajectoryBucket,
 } from './types.js';
 
@@ -80,6 +81,10 @@ interface SessionSnapshot {
   narrative: string;
   signals: string[];
   driftCount: number;
+  /** Tool invocations the pulse saw in the window. Mirrors the value the TUI
+   *  filters on for `hideIdle` (recap.enriched.toolInvocationCount). 0 for
+   *  error rows. */
+  toolInvocationCount: number;
   /** Set when pulse() threw. */
   error?: string;
 }
@@ -104,10 +109,21 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
   const discoveryRoots = opts.discoveryRoots;
   const format = opts.format ?? 'text';
   const strict = opts.strict ?? false;
+  // Headless filters the TUI applied but `--once` previously ignored: idle
+  // sessions are dropped from the report (idle never gates, so this is
+  // governance-safe), and the per-session listing is capped for readability.
+  const hideIdle = opts.hideIdle ?? false;
+  const maxSessions = opts.maxSessions; // undefined / 0 => no display cap
+  // Fail closed on infrastructure errors when strict (opt-in; see runtime
+  // gating below). Redaction scrubs transcript-derived content from output.
+  const failOnError = opts.failOnError ?? false;
+  const redact: RedactMode = opts.redact ?? 'none';
 
   const discovered = await discoverSessions({
     roots: discoveryRoots,
     staleMs,
+    maxDepth: opts.maxDepth,
+    excludeDirs: opts.excludeDirs,
   });
 
   // v0.7.1: honour the same `showSubagents` default the TUI applies
@@ -166,6 +182,7 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
         narrative: err instanceof Error ? err.message : String(err),
         signals: [],
         driftCount: 0,
+        toolInvocationCount: 0,
         error: err instanceof Error ? err.message : String(err),
       };
     }
@@ -191,12 +208,25 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
     snapshots[i]!.label = baseLabels[i]!.projectName + suffixes[i]!;
   }
 
-  const report = buildReport(snapshots);
+  // hideIdle: drop zero-activity sessions from the report entirely. Error
+  // rows are KEPT (an unreadable transcript is a finding you want to see, and
+  // it matters for --fail-on-error below); idle / zero-tool sessions never
+  // land in a gating bucket, so removing them can't change the gate.
+  const reported = hideIdle
+    ? snapshots.filter((s) => s.bucket === 'error' || s.toolInvocationCount > 0)
+    : snapshots;
+
+  // bucketCounts / hasGatingFinding / sessionCount are computed over the FULL
+  // reported set so governance sees every session; maxSessions caps only the
+  // human text listing (renderTextReport), never the analysis — drifting
+  // session #21 still gates even if it isn't printed.
+  const rawReport = buildReport(reported);
+  const report = redact === 'none' ? rawReport : redactReport(rawReport, redact);
 
   if (format === 'json') {
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   } else {
-    process.stdout.write(renderTextReport(report) + '\n');
+    process.stdout.write(renderTextReport(report, maxSessions, redact) + '\n');
   }
 
   // v0.4.2: one-shot notification when --notify is set and any session is
@@ -220,12 +250,39 @@ export async function runOnceMode(opts: LiveOptions): Promise<number> {
     notifier.stop();
   }
 
-  // CI gating. Strict mode flips exit code when any session lands in a
-  // "needs attention" bucket. The bucket list deliberately excludes
-  // `pending` and `error` — those are infrastructure states, not findings.
-  if (strict && report.hasGatingFinding) {
-    return 1;
+  // CI gating — see gateExitCode for the rules. The stderr note for the
+  // fail-on-error path stays here (gateExitCode is pure).
+  const errorCount = report.bucketCounts['error'] ?? 0;
+  if (strict && failOnError && errorCount > 0) {
+    process.stderr.write(
+      `agentpulse: ${errorCount} session(s) failed to analyze; failing the gate (--fail-on-error)\n`
+    );
   }
+  return gateExitCode(report, { strict, failOnError });
+}
+
+/**
+ * Compute the `--once` process exit code from a report and the gating
+ * options. Pure + exported so the governance contract is unit-testable.
+ *
+ *   - strict + a gating bucket (`drifting`/`stuck`)        → 1
+ *   - strict + failOnError + at least one `error` bucket   → 1  (fail closed)
+ *   - otherwise                                            → 0
+ *
+ * `pending` and `error` are infrastructure states, not findings, so they
+ * never gate on their own — EXCEPT when `failOnError` opts an `error` into
+ * the gate (#F2). Pre-fix, a run of only unreadable/corrupt transcripts
+ * exited 0 under `--strict`: the governance gate passed though its own
+ * analysis never ran (fail-open). `--fail-on-error` makes that fail closed;
+ * bare `--strict` keeps the prior advisory-on-error behaviour.
+ */
+export function gateExitCode(
+  report: { hasGatingFinding: boolean; bucketCounts: Record<string, number> },
+  opts: { strict: boolean; failOnError: boolean }
+): number {
+  if (opts.strict && report.hasGatingFinding) return 1;
+  const errorCount = report.bucketCounts['error'] ?? 0;
+  if (opts.strict && opts.failOnError && errorCount > 0) return 1;
   return 0;
 }
 
@@ -250,6 +307,7 @@ function snapshotFromRecap(
     narrative: recap.narrative,
     signals: [...recap.verdict.signals],
     driftCount: recap.verdict.drifts.length,
+    toolInvocationCount: recap.enriched.toolInvocationCount,
   };
 }
 
@@ -271,7 +329,11 @@ function buildReport(snapshots: SessionSnapshot[]): OnceReport {
   };
 }
 
-function renderTextReport(report: OnceReport): string {
+function renderTextReport(
+  report: OnceReport,
+  maxSessions?: number,
+  redact: RedactMode = 'none'
+): string {
   const lines: string[] = [];
   lines.push(`AgentPulse — ${report.sessionCount} session${report.sessionCount === 1 ? '' : 's'} at ${new Date(report.generatedAt).toISOString()}`);
 
@@ -282,9 +344,23 @@ function renderTextReport(report: OnceReport): string {
   if (bucketParts.length > 0) {
     lines.push(`  ${bucketParts.join(' · ')}`);
   }
+  if (redact !== 'none') {
+    lines.push(`  (output redacted: ${redact})`);
+  }
   lines.push('');
 
-  for (const s of report.sessions) {
+  // maxSessions caps the per-session listing for readability. Snapshots are
+  // in discovery order (lastModified DESC), so slicing keeps the freshest N.
+  // Display-only: bucketCounts / hasGatingFinding above already reflect every
+  // analyzed session, and the truncation is announced (never silent).
+  const cap = maxSessions && maxSessions > 0 ? maxSessions : report.sessions.length;
+  const shown = report.sessions.slice(0, cap);
+  if (shown.length < report.sessions.length) {
+    lines.push(`  showing freshest ${shown.length} of ${report.sessions.length} sessions (--max-sessions ${maxSessions})`);
+    lines.push('');
+  }
+
+  for (const s of shown) {
     // v0.7.1: prefer the disambiguated label over raw projectName so
     // the text report can be skimmed when two sessions share a name.
     const label = s.label || s.projectName || `session-${s.id.slice(0, 8)}`;
@@ -292,14 +368,19 @@ function renderTextReport(report: OnceReport): string {
     lines.push(`  ${label} [${s.runtime}]  →  ${s.bucket}${driftSuffix}  (confidence ${s.confidence.toFixed(2)})`);
     if (s.error) {
       lines.push(`    error: ${s.error}`);
-    } else {
+    } else if (s.narrative) {
+      // narrative is '' under --redact all; skip the detail line then.
       lines.push(`    ${stripBoldMarkdown(s.narrative).split('\n')[0]}`);
     }
   }
 
   if (report.hasGatingFinding) {
+    // Count from bucketCounts, not the (possibly capped) shown list, so the
+    // tally stays accurate when a gating session sits below the display cap.
+    const gating =
+      (report.bucketCounts['drifting'] ?? 0) + (report.bucketCounts['stuck'] ?? 0);
     lines.push('');
-    lines.push(`⚠ ${report.sessions.filter((s) => GATING_BUCKETS.has(s.bucket)).length} session(s) need attention.`);
+    lines.push(`⚠ ${gating} session(s) need attention.`);
   }
 
   return lines.join('\n');
@@ -307,4 +388,69 @@ function renderTextReport(report: OnceReport): string {
 
 function stripBoldMarkdown(s: string): string {
   return s.replace(/\*\*(.+?)\*\*/g, '$1');
+}
+
+// ── Redaction (#F8) ──────────────────────────────────────────────────
+//
+// `--once` output (text report + JSON) can reach the GitHub step summary
+// and a sticky PR comment. Narratives, signals, and the transcript path
+// embed transcript-derived absolute paths, path clusters, and file names.
+// `--redact paths` reduces those to basenames; `--redact all` additionally
+// drops narratives and signals. Labels / buckets / confidence / drift
+// counts are always preserved — a project basename and a verdict aren't
+// path leaks, and dropping them would defeat the report's purpose.
+
+/** Last path segment of `p` (handles both separators). */
+function basenameOf(p: string): string {
+  const parts = p.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1]! : p;
+}
+
+/** Reduce a token to its basename when it looks like a filesystem path
+ *  (has a separator, a leading `…/` ellipsis marker, or a drive letter).
+ *  Plain words — topics like `auth` — pass through unchanged. */
+function redactPathToken(token: string): string {
+  const looksLikePath =
+    /[\\/]/.test(token) || token.startsWith('…/') || /^[a-z]:/i.test(token);
+  return looksLikePath ? basenameOf(token) : token;
+}
+
+/** Redact backticked path tokens inside a rendered narrative, leaving the
+ *  surrounding prose and non-path topics intact. */
+function redactNarrative(narrative: string): string {
+  return narrative.replace(
+    /`([^`]+)`/g,
+    (_m, inner: string) => '`' + redactPathToken(inner) + '`'
+  );
+}
+
+/** Redact absolute-path runs anywhere in free text (error messages carry
+ *  the full transcript path, unbackticked). A "path run" is two or more
+ *  separator-delimited segments, optionally drive-prefixed. */
+function redactAbsPaths(s: string): string {
+  return s.replace(/(?:[a-z]:)?(?:[\\/][^\s"'`\\/]+){2,}/gi, (m) => {
+    const base = basenameOf(m);
+    return base ? '…/' + base : m;
+  });
+}
+
+function redactReport(report: OnceReport, mode: RedactMode): OnceReport {
+  const sessions = report.sessions.map((s) => {
+    const out: SessionSnapshot = { ...s, transcriptPath: basenameOf(s.transcriptPath) };
+    if (out.error) out.error = redactAbsPaths(out.error);
+    if (mode === 'all') {
+      out.narrative = '';
+      out.signals = [];
+    } else {
+      out.narrative = redactNarrative(s.narrative);
+      // Token-level pass so single-separator cluster paths (`src/auth`) and
+      // absolute file tokens both collapse to a basename, without mangling
+      // prose words that contain no separator.
+      out.signals = s.signals.map((sig) =>
+        sig.split(' ').map(redactPathToken).join(' ')
+      );
+    }
+    return out;
+  });
+  return { ...report, sessions };
 }

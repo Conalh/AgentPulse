@@ -103,6 +103,52 @@ test('discoverSessions honors staleMs and skips old files', async () => {
   }
 });
 
+// ── #F6 — bounded discovery walk (maxDepth / excludeDirs) ─────────────
+
+test('discoverSessions: maxDepth bounds the recursive walk', async () => {
+  const root = mkTmp();
+  try {
+    // root/a.jsonl (depth 0), root/sub/b.jsonl (1), root/sub/deep/c.jsonl (2)
+    writeFileSync(join(root, 'a.jsonl'), JSON.stringify({ type: 'user' }) + '\n');
+    const sub = join(root, 'sub');
+    mkdirSync(join(sub, 'deep'), { recursive: true });
+    writeFileSync(join(sub, 'b.jsonl'), JSON.stringify({ type: 'user' }) + '\n');
+    writeFileSync(join(sub, 'deep', 'c.jsonl'), JSON.stringify({ type: 'user' }) + '\n');
+
+    const count = async (opts) =>
+      (await discoverSessions({ roots: [root], staleMs: Infinity, ...opts })).length;
+
+    assert.equal(await count({}), 3, 'unbounded finds all three');
+    assert.equal(await count({ maxDepth: 0 }), 1, 'depth 0 → only root-level a.jsonl');
+    assert.equal(await count({ maxDepth: 1 }), 2, 'depth 1 → a + b, not deep/c');
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('discoverSessions: excludeDirs prunes whole subtrees', async () => {
+  const root = mkTmp();
+  try {
+    writeFileSync(join(root, 'a.jsonl'), JSON.stringify({ type: 'user' }) + '\n');
+    const nm = join(root, 'node_modules', 'pkg');
+    mkdirSync(nm, { recursive: true });
+    writeFileSync(join(nm, 'b.jsonl'), JSON.stringify({ type: 'user' }) + '\n');
+
+    const all = await discoverSessions({ roots: [root], staleMs: Infinity });
+    assert.equal(all.length, 2, 'without exclude, both are found');
+
+    const pruned = await discoverSessions({
+      roots: [root],
+      staleMs: Infinity,
+      excludeDirs: ['node_modules'],
+    });
+    assert.equal(pruned.length, 1, 'node_modules subtree is skipped');
+    assert.ok(pruned[0].transcriptPath.endsWith('a.jsonl'));
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test('watcher emits add for a JSONL created after start()', async () => {
   const root = mkTmp();
   // Wrap inside ".claude/projects" so the watcher infers the right runtime.

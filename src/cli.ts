@@ -40,13 +40,23 @@ Live options:
   --no-detectors            Skip drift detection
   --roots <p1,p2,...>       Override discovery roots (comma-separated)
   --stale <duration>        Skip sessions older than this. Default: 1h
+  --max-depth <N>           Max discovery recursion depth below each root
+                            (unbounded by default)
+  --exclude <d1,d2,...>     Directory names to skip during discovery
   --hide-idle               Hide sessions with zero activity in the window
+                            (also applies to --once)
   --max-sessions <N>        Cap the displayed list. Default: 10
+                            (with --once: caps the printed list only;
+                            gating still considers every session)
   --show-subagents          Include subagent transcripts (agent-<hex>)
   --once                    One-shot snapshot, no TUI. Exits when done.
   --format <fmt>            With --once: 'text' (default) or 'json'
   --strict                  Exit 1 if any session is drifting or stuck
                             (CI gating; only honored with --once)
+  --fail-on-error           With --once --strict: also exit 1 when a session
+                            fails to analyze (unreadable / corrupt transcript)
+  --redact <mode>           Redact transcript-derived paths from --once output:
+                            none (default), paths, all
   --notify <mode>           Local notification on transitions into drifting/
                             stuck. Modes: none (default), bell, os, both.
                             'bell' writes \\x07 to stderr; 'os' fires a
@@ -312,6 +322,13 @@ function parseLiveCli(
         once: { type: 'boolean', default: false },
         format: { type: 'string' },
         strict: { type: 'boolean', default: false },
+        // #F2: fail closed on infrastructure errors under --strict (opt-in).
+        'fail-on-error': { type: 'boolean', default: false },
+        // #F8: redact transcript-derived content from --once output.
+        redact: { type: 'string' },
+        // #F6: bound discovery cost on broad roots.
+        'max-depth': { type: 'string' },
+        exclude: { type: 'string' },
         // v0.4.2: local notification mode for transitions into drifting/stuck.
         notify: { type: 'string' },
       },
@@ -366,6 +383,39 @@ function parseLiveCli(
     };
   }
 
+  // #F8: redaction mode for --once output.
+  const redactStr = (v.redact as string | undefined) ?? 'none';
+  if (redactStr !== 'none' && redactStr !== 'paths' && redactStr !== 'all') {
+    return {
+      ok: false,
+      error: {
+        message: `Invalid --redact: ${redactStr} (expected 'none', 'paths', or 'all')`,
+        code: 2,
+      },
+    };
+  }
+
+  // #F6: discovery depth + exclude knobs.
+  const maxDepthStr = v['max-depth'] as string | undefined;
+  let maxDepth: number | undefined;
+  if (maxDepthStr !== undefined) {
+    const n = Number(maxDepthStr);
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+      return {
+        ok: false,
+        error: {
+          message: `Invalid --max-depth: ${maxDepthStr} (expected non-negative integer)`,
+          code: 2,
+        },
+      };
+    }
+    maxDepth = n;
+  }
+  const excludeStr = v.exclude as string | undefined;
+  const excludeDirs = excludeStr
+    ? excludeStr.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+    : undefined;
+
   // v0.4.2: validate --notify mode. Default `'none'` — notifications are
   // opt-in because they're nag-prone; defaulting to bell would surprise users.
   const notifyStr = (v.notify as string | undefined) ?? 'none';
@@ -398,6 +448,10 @@ function parseLiveCli(
       once: Boolean(v.once),
       format: formatStr as 'text' | 'json',
       strict: Boolean(v.strict),
+      failOnError: Boolean(v['fail-on-error']),
+      redact: redactStr as import('./types.js').RedactMode,
+      maxDepth,
+      excludeDirs,
       notify: notifyStr as import('./notifications.js').NotifyMode,
     },
   };

@@ -9,6 +9,40 @@ and add the title to scripts/backfill-releases.mjs so the GitHub Release can
 be cut from this section. See docs/RELEASING.md.
 -->
 
+## [Unreleased]
+
+A correctness-and-hardening pass driven by an external code review. The headless `agentpulse live --once` path (the form the GitHub Action runs) is brought in line with the TUI and the inputs the Action already documented; the strict CI gate no longer passes when its own analysis crashed; the macOS notifier escaping is fixed; and discovery gains cost bounds while the report gains an opt-in redaction layer. Detector scope, the Action's supply-chain model, and the CI output's privacy surface are now documented honestly instead of being overstated or left implicit.
+
+### Fixed — `live --once` silently ignored `--hide-idle` and `--max-sessions`
+
+Both flags are parsed into `LiveOptions` by the CLI and forwarded by the GitHub Action (`max-sessions` defaults to `20`), and the interactive TUI honours both — but `runOnceMode` never read them, so in headless/CI mode they were no-ops despite the Action documenting them. `--once` now applies both: `--hide-idle` drops zero-activity sessions from the report (error rows are kept; idle sessions never gate, so this can't change the gate), and `--max-sessions` caps the **printed** per-session listing. The cap is deliberately display-only — `bucketCounts`, `hasGatingFinding`, and the JSON `sessions[]` still reflect every analyzed session, so a drifting/stuck session below the cap still fails the build — and the text report announces the truncation (`showing freshest N of M sessions`) rather than hiding it. `SessionSnapshot` now carries `toolInvocationCount` (sourced from `recap.enriched`) for the idle filter and JSON consumers.
+
+### Fixed — strict CI gate failed open on transcript/parser errors
+
+In `--once`, a session whose `pulse()` threw (unreadable or corrupt transcript, parser failure) becomes a snapshot with bucket `error`. The gating set is `{drifting, stuck}` and `--strict` exited 1 only on `hasGatingFinding`, so a run consisting solely of broken transcripts exited 0 under `--strict` — a governance gate passing green though its own analysis never ran. New `--fail-on-error` (and Action input `fail-on-error`, defaulting to `true`) makes `--strict` also fail when any session is in the `error` bucket. Bare `--strict` without the flag keeps the prior advisory-on-error behaviour so local use isn't disrupted. The exit-code decision is now a pure, exported `gateExitCode()` so the gate contract is unit-tested directly.
+
+### Fixed — macOS notification could break out of the AppleScript string literal
+
+The `--notify os` macOS branch assembles a single `display notification "…" with title "…"` expression from transcript-derived text (the session label is ultimately `basename(cwd)`, unsanitized) but escaped **only** double-quotes. A label ending in a backslash turned the closing quote into an escaped quote so the literal never terminated — an AppleScript-injection/breakage vector — and a raw newline made the one-line expression a syntax error. The escaper now strips control characters (CR/LF included) and escapes the backslash before the quote, and all platforms clamp label length. The Windows PowerShell branch was already sound (every value lands in a single-quoted literal with `'`→`''` doubling, the complete escaping there) and is unchanged apart from the length clamp; Linux uses pure `argv`. New direct tests fuzz the escaper with quotes, backslashes, newlines, and an injection-shaped payload.
+
+### Changed — narrowed the text-only verification failure heuristic
+
+`classifyResultText` (consulted only when a verification command has no exit code — callers prefer the exit code) included a bare `/\berror\b/i` in its failure table, so any result text merely mentioning the word "error" was classified as a failure, which could bias the stuck/converging/sequence verdicts. The bare match is replaced with runner-shaped error contexts (`Error:` at line start, `npm ERR!`, `error TS####`, `N error(s)`, `compilation/build/command failed`); genuinely-red output still matches, an incidental "error" no longer does. A stale comment in `sequences.ts` (claiming indeterminate verifications count as failures for `stuck_loop`, when the detector only counts clear failures) is corrected.
+
+### Added — bounded discovery (`--max-depth`, `--exclude`)
+
+Discovery and the polling watcher walked transcript roots with an unbounded recursive descent and applied staleness only after every file was found and `stat`'d, so a broad `--roots` (or a CI artifact dir with deep history) could incur unnecessary I/O. `--max-depth <N>` caps how far below each root the walk descends and `--exclude <d1,d2,…>` prunes directory names (e.g. `node_modules,.git`) before recursing; both are threaded through the one-shot discovery and the live watcher, and exposed as Action inputs. Defaults are unchanged (unbounded / no exclusions), so existing behaviour is preserved.
+
+### Added — opt-in redaction for `--once` output (`--redact`)
+
+The Action streams the report into the GitHub step summary and an optional sticky PR comment; narratives, signals, and the transcript path embed transcript-derived absolute paths, path clusters, and file names, with no way to scrub them. New `--redact <none|paths|all>` (and Action input `redact`): `paths` reduces file paths / path clusters in narratives, signals, and the transcript path to basenames; `all` additionally drops narratives and signals, leaving label, bucket, confidence, and drift count. Applies to both `text` and `json`.
+
+### Documented — detector scope, supply chain, and CI privacy
+
+- **Drift-detector scope.** The README now states that `drifting` means "a known risky pattern fired," not "this session is safe," and lists the three rule families the detector actually implements (privileged-path access; `curl`/`wget` piped to a shell; write outside the repo root) plus the notable patterns it does **not** cover. The "network execution" wording that overstated the single shell-pipe rule is corrected.
+- **Action supply chain.** The Action executes the **published npm package** `@conalh/agentpulse@<version>`, not the checked-out action source; pinning the git ref pins only the version string while the code and its semver-compatible dependencies resolve from npm at run time. This trust boundary is now documented in the README and `action.yml`.
+- **CI privacy.** The README documents exactly what transcript-derived content reaches the step summary / PR comment (and the additional fields in the JSON snapshot), with guidance to use `redact` and not to upload the raw JSON publicly.
+
 ## [0.7.3] — 2026-05-28
 
 ### Internal

@@ -34,11 +34,17 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
   const hideIdle = opts.hideIdle ?? false;
   const maxSessions = opts.maxSessions ?? 10;
   const showSubagents = opts.showSubagents ?? false;
+  // #F6: optional discovery bounds, applied to both the initial probe and
+  // the live watcher so a broad --roots doesn't trigger an unbounded walk.
+  const maxDepth = opts.maxDepth;
+  const excludeDirs = opts.excludeDirs;
 
   // Discovery is a one-shot probe; the watcher takes over for live updates.
   const initial = await discoverSessions({
     roots: discoveryRoots,
     staleMs,
+    maxDepth,
+    excludeDirs,
   });
 
   const orchestrator = createOrchestrator({
@@ -80,7 +86,7 @@ export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
   orchestrator.on(notifyListener);
 
   const watcher = createSessionWatcher({
-    discover: { roots: discoveryRoots, staleMs },
+    discover: { roots: discoveryRoots, staleMs, maxDepth, excludeDirs },
   });
 
   // Wire watcher → orchestrator. The watcher emits add/change/remove; the

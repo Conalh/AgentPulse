@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { runConcurrent } from '../dist/once.js';
+import { runConcurrent, gateExitCode } from '../dist/once.js';
 
 const CLI = resolve('dist/cli.js');
 const FIXTURES = resolve('test/fixtures');
@@ -239,4 +239,133 @@ test('live --once --format json: label disambiguates co-named sessions (v0.7.1)'
   } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
+});
+
+// ── #F1 / #F8 — once-mode now honours --hide-idle / --max-sessions and
+//    supports --redact. Build a temp root of idle sessions (a lone
+//    session_start → empty window → idle, toolInvocationCount 0). ──────
+
+function writeIdleRoot(n) {
+  const root = mkdtempSync(join(tmpdir(), 'agentpulse-once-filters-'));
+  for (let i = 0; i < n; i++) {
+    const projDir = join(root, `C--Dev-Proj${i}`);
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(
+      join(projDir, `s${i}.jsonl`),
+      JSON.stringify({
+        type: 'session_start',
+        cwd: `/Dev/Proj${i}`,
+        timestamp: new Date().toISOString(),
+      }) + '\n'
+    );
+  }
+  return root;
+}
+
+test('live --once --hide-idle: idle sessions are filtered (#F1)', () => {
+  const root = writeIdleRoot(3);
+  try {
+    const base = runCli(['live', '--once', '--format', 'json', '--roots', root, '--stale', '999d']);
+    assert.equal(base.status, 0, base.stderr);
+    assert.equal(JSON.parse(base.stdout).sessionCount, 3, 'all three shown without --hide-idle');
+
+    const hidden = runCli(['live', '--once', '--format', 'json', '--hide-idle', '--roots', root, '--stale', '999d']);
+    assert.equal(hidden.status, 0, hidden.stderr);
+    assert.equal(JSON.parse(hidden.stdout).sessionCount, 0, 'all idle sessions filtered with --hide-idle');
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('live --once --max-sessions caps the text listing but not JSON / gating (#F1)', () => {
+  const root = writeIdleRoot(3);
+  try {
+    const j = runCli(['live', '--once', '--format', 'json', '--max-sessions', '1', '--roots', root, '--stale', '999d']);
+    assert.equal(j.status, 0, j.stderr);
+    const doc = JSON.parse(j.stdout);
+    assert.equal(doc.sessionCount, 3, 'JSON keeps every analyzed session (display cap is text-only)');
+    assert.equal(doc.sessions.length, 3);
+
+    const t = runCli(['live', '--once', '--format', 'text', '--max-sessions', '1', '--roots', root, '--stale', '999d']);
+    assert.equal(t.status, 0, t.stderr);
+    assert.match(t.stdout, /showing freshest 1 of 3 sessions/);
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('live --once --redact paths reduces the transcript path to a basename (#F8)', () => {
+  const root = writeIdleRoot(1);
+  try {
+    const plain = JSON.parse(
+      runCli(['live', '--once', '--format', 'json', '--roots', root, '--stale', '999d']).stdout
+    );
+    assert.match(plain.sessions[0].transcriptPath, /[\\/]/, 'unredacted path is absolute');
+
+    const red = JSON.parse(
+      runCli(['live', '--once', '--format', 'json', '--redact', 'paths', '--roots', root, '--stale', '999d']).stdout
+    );
+    const tp = red.sessions[0].transcriptPath;
+    assert.equal(/[\\/]/.test(tp), false, `redacted path should be a basename, got ${tp}`);
+    assert.match(tp, /\.jsonl$/);
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('live --once --redact all drops narratives and signals (#F8)', () => {
+  const root = writeIdleRoot(1);
+  try {
+    const red = JSON.parse(
+      runCli(['live', '--once', '--format', 'json', '--redact', 'all', '--roots', root, '--stale', '999d']).stdout
+    );
+    assert.equal(red.sessions[0].narrative, '', 'narrative dropped under --redact all');
+    assert.deepEqual(red.sessions[0].signals, [], 'signals dropped under --redact all');
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('live --redact=invalid: usage error, exit 2 (#F8)', () => {
+  const r = runCli(['live', '--once', '--redact', 'sometimes', '--roots', FIXTURES]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /Invalid --redact/);
+});
+
+// ── #F2 — strict CI gate is fail-open on infrastructure errors unless
+//    --fail-on-error. gateExitCode is the pure governance-gate contract. ─
+
+test('gateExitCode: strict + a gating bucket → 1 (#F2)', () => {
+  assert.equal(
+    gateExitCode({ hasGatingFinding: true, bucketCounts: { drifting: 1 } }, { strict: true, failOnError: false }),
+    1
+  );
+});
+
+test('gateExitCode: strict + only errors, no --fail-on-error → 0 (fail-open default) (#F2)', () => {
+  assert.equal(
+    gateExitCode({ hasGatingFinding: false, bucketCounts: { error: 2 } }, { strict: true, failOnError: false }),
+    0
+  );
+});
+
+test('gateExitCode: strict + --fail-on-error + errors → 1 (fail-closed) (#F2)', () => {
+  assert.equal(
+    gateExitCode({ hasGatingFinding: false, bucketCounts: { error: 2 } }, { strict: true, failOnError: true }),
+    1
+  );
+});
+
+test('gateExitCode: --fail-on-error without --strict stays advisory → 0 (#F2)', () => {
+  assert.equal(
+    gateExitCode({ hasGatingFinding: false, bucketCounts: { error: 2 } }, { strict: false, failOnError: true }),
+    0
+  );
+});
+
+test('gateExitCode: a clean run → 0 (#F2)', () => {
+  assert.equal(
+    gateExitCode({ hasGatingFinding: false, bucketCounts: { idle: 3 } }, { strict: true, failOnError: true }),
+    0
+  );
 });

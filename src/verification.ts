@@ -91,7 +91,22 @@ const FAIL_PATTERNS: readonly RegExp[] = [
   /\bfailing\b/i,
   /\d+\s+failed\b/i,
   /\bTests?:\s*\d+\s*failed/i,
-  /\berror\b/i,
+  // The bare `/\berror\b/i` here used to flip ANY result text mentioning
+  // the word "error" to a failure — including an error-handling test name
+  // ("handles error gracefully ... ok"), a logged-but-recovered error, or
+  // a help string. Since this table is only consulted when no exit code is
+  // present (callers prefer the exit code; see `verificationOutcome` /
+  // `verificationPassed`), that incidental match could mark a passing or
+  // indeterminate run as `fail` and bias the stuck/converging/sequence
+  // verdicts. Narrowed to runner-shaped error contexts so the word "error"
+  // alone no longer counts; genuinely-red output still matches.
+  /^\s*error:/im,            // "Error:" at line start (node, generic CLIs)
+  /\bnpm\s+err!/i,           // npm ERR!
+  /\berror\s+TS\d+/i,        // tsc diagnostic, e.g. "error TS2304"
+  /\b\d+\s+errors?\b/i,      // "3 errors", "1 error"
+  /\bcompilation failed\b/i,
+  /\bbuild failed\b/i,
+  /\bcommand failed\b/i,
 ];
 
 const PASS_PATTERNS: readonly RegExp[] = [

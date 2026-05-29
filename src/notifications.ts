@@ -80,16 +80,64 @@ function ringBell(): void {
   }
 }
 
+/**
+ * Escape an arbitrary string for embedding inside an AppleScript
+ * double-quoted string literal.
+ *
+ * The notification title/body are transcript-derived (the session label is
+ * ultimately `basename(cwd)` read from the transcript, with no charset
+ * sanitization), so they are untrusted input. Pre-fix this branch escaped
+ * ONLY `"` — which is insufficient:
+ *   - A label ending in a backslash turned the closing quote into an escaped
+ *     quote (`\"`), so the string literal never terminated and the rest of
+ *     the label was parsed AS AppleScript — an injection vector up to
+ *     `do shell script`.
+ *   - A raw newline/CR makes the single-line `display notification "..."`
+ *     expression a syntax error (best case) or splits it (worst case).
+ *
+ * Implemented as an explicit per-character pass (rather than a regex with
+ * control-character classes) so the source carries no literal control bytes:
+ * control chars (code < 0x20, or DEL 0x7F) become spaces, a backslash is
+ * escaped BEFORE the quote so our own escape isn't re-escaped, and a double
+ * quote is escaped.
+ */
+function escapeAppleScriptStringLiteral(s: string): string {
+  let out = '';
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      out += ' ';
+    } else if (ch === '\\') {
+      out += '\\\\';
+    } else if (ch === '"') {
+      out += '\\"';
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/** Cap notification text length. Defends every platform branch against
+ *  pathological multi-KB labels (a runaway path, a malformed transcript)
+ *  becoming an oversized command string. Notification UIs truncate anyway. */
+function clampNotificationText(s: string): string {
+  const MAX = 200;
+  return s.length <= MAX ? s : s.slice(0, MAX - 1) + '…';
+}
+
 /** Spawn an OS notification, fire-and-forget. */
-function fireOsNotification(title: string, body: string): void {
+function fireOsNotification(rawTitle: string, rawBody: string): void {
   try {
+    const title = clampNotificationText(rawTitle);
+    const body = clampNotificationText(rawBody);
     const plat = process.platform;
     if (plat === 'darwin') {
-      // osascript handles its own escaping when args are passed individually,
-      // but `display notification` is a single AppleScript expression, so we
-      // assemble it and rely on a minimal escape pass for embedded quotes.
-      const safeBody = body.replace(/"/g, '\\"');
-      const safeTitle = title.replace(/"/g, '\\"');
+      // `display notification` is a single AppleScript expression, so we
+      // assemble it and fully escape the embedded (untrusted) title/body for
+      // an AppleScript string literal — see escapeAppleScriptStringLiteral.
+      const safeBody = escapeAppleScriptStringLiteral(body);
+      const safeTitle = escapeAppleScriptStringLiteral(title);
       const script = `display notification "${safeBody}" with title "${safeTitle}"`;
       const child = spawn('osascript', ['-e', script], {
         detached: true,
@@ -101,7 +149,8 @@ function fireOsNotification(title: string, body: string): void {
       child.unref();
     } else if (plat === 'linux') {
       // notify-send is part of libnotify-bin on most distros. When it's
-      // missing, the spawn ENOENTs out and we eat the error.
+      // missing, the spawn ENOENTs out and we eat the error. Pure argv —
+      // no shell, no string assembly — so no escaping is needed here.
       const child = spawn('notify-send', [title, body], {
         detached: true,
         stdio: 'ignore',
@@ -116,6 +165,11 @@ function fireOsNotification(title: string, body: string): void {
       // cleaner but isn't stdlib and requires a separate install. Users
       // who want clean Windows toasts can use `--notify both` (or run
       // `Install-Module -Name BurntToast` themselves and we'll pick it up).
+      //
+      // Every interpolated value lands inside a PowerShell SINGLE-quoted
+      // string literal, where `'` is the only metacharacter — backtick,
+      // `$`, `"`, `\`, and newlines are all literal. Doubling `'` to `''`
+      // is therefore the complete and correct escaping for this context.
       const safeBody = body.replace(/'/g, "''");
       const safeTitle = title.replace(/'/g, "''");
       // Try BurntToast first; if the module is missing, the catch falls
@@ -193,3 +247,14 @@ export function createNotifier(opts: NotificationOptions): Notifier {
 
   return { onTransition, notifyOnce, stop };
 }
+
+/**
+ * Exported for unit tests: the AppleScript string-literal escaper and the
+ * length clamp. Lets a fuzz/property test feed transcript-derived labels
+ * (containing `"`, backslash, backtick, `$(`, newlines) through the exact
+ * escaping the macOS branch uses, without spawning `osascript`.
+ */
+export const __testables = {
+  escapeAppleScriptStringLiteral,
+  clampNotificationText,
+};

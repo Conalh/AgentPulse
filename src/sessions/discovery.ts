@@ -293,10 +293,43 @@ export function sessionIdFromPath(absPath: string): string {
 }
 
 /**
+ * Bounds for the transcript walk. `maxDepth` caps how far below a root we
+ * descend (root contents = depth 0; descending into a child dir makes its
+ * contents depth 1); `Infinity` = unbounded. `exclude` is a set of
+ * lowercased directory basenames never descended into. Both default to the
+ * unbounded/empty behaviour the walker had before they were added — see
+ * `DiscoverOptions.maxDepth` / `excludeDirs`.
+ */
+export interface WalkLimits {
+  maxDepth: number;
+  exclude: ReadonlySet<string>;
+}
+
+/** Build {@link WalkLimits} from the optional discovery knobs. Exported so the
+ *  watcher applies identical bounds to its own recursive scan. */
+export function buildWalkLimits(opts: {
+  maxDepth?: number;
+  excludeDirs?: string[];
+}): WalkLimits {
+  return {
+    maxDepth: opts.maxDepth ?? Infinity,
+    exclude: new Set((opts.excludeDirs ?? []).map((d) => d.toLowerCase())),
+  };
+}
+
+/**
  * Recursively walk a directory and yield every .jsonl file. Tolerates
  * missing dirs (returns []) and EACCES on subdirs (skips them).
+ *
+ * Bounded by {@link WalkLimits}: a `--roots` (or CI artifact dir) pointed at
+ * a broad tree no longer incurs an unbounded recursive descent — descent
+ * stops at `maxDepth` and prunes excluded directory names before recursing.
  */
-async function walkJsonl(dir: string): Promise<string[]> {
+async function walkJsonl(
+  dir: string,
+  limits: WalkLimits,
+  depth = 0
+): Promise<string[]> {
   const out: string[] = [];
   let entries: import('node:fs').Dirent[];
   try {
@@ -307,7 +340,9 @@ async function walkJsonl(dir: string): Promise<string[]> {
   for (const ent of entries) {
     const full = join(dir, ent.name);
     if (ent.isDirectory()) {
-      const nested = await walkJsonl(full);
+      if (depth >= limits.maxDepth) continue; // depth bound
+      if (limits.exclude.has(ent.name.toLowerCase())) continue; // pruned dir
+      const nested = await walkJsonl(full, limits, depth + 1);
       out.push(...nested);
     } else if (ent.isFile() && ent.name.toLowerCase().endsWith('.jsonl')) {
       out.push(full);
@@ -326,6 +361,7 @@ export async function discoverSessions(
 ): Promise<DiscoveredSession[]> {
   const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
   const cutoff = staleMs === Infinity ? -Infinity : Date.now() - staleMs;
+  const limits = buildWalkLimits(opts);
 
   // Resolve roots. When `opts.roots` is supplied we use them verbatim and
   // infer runtime from the path. When not supplied, we use the platform
@@ -349,7 +385,7 @@ export async function discoverSessions(
     }
     if (!exists) continue;
 
-    const files = await walkJsonl(root.path);
+    const files = await walkJsonl(root.path, limits);
     for (const file of files) {
       let st;
       try {

@@ -50,7 +50,7 @@ Verdict: ● converging (confidence 0.85)
 
 ## Why this exists
 
-AI agents can run for a long time while the human is not staring at every tool call. Sometimes they converge. Sometimes they explore. Sometimes they get stuck in the same failed loop. Sometimes they drift into privileged paths, network execution, or writes outside the repo.
+AI agents can run for a long time while the human is not staring at every tool call. Sometimes they converge. Sometimes they explore. Sometimes they get stuck in the same failed loop. Sometimes they touch a privileged path, pipe a network fetch straight into a shell, or write outside the repo.
 
 AgentPulse exists to make that session state visible while the work is happening. It is deterministic local signal, not an LLM judging another LLM.
 
@@ -62,8 +62,16 @@ AgentPulse exists to make that session state visible while the work is happening
 | **exploring** | Reading and orientation, no meaningful edit trajectory yet. |
 | **stuck** | Repeated edits/tests/failures, user pushback, or loop-like behavior. |
 | **done** | Completion language plus idle gap. |
-| **drifting** | Privileged-path access, network execution, or write outside repo. |
+| **drifting** | A deterministic drift rule fired (privileged-path access, a shell-piped network fetch like `curl … \| sh`, or a write outside the repo root). See [Drift detection scope](#drift-detection-scope). |
 | **idle** | Activity has gone quiet or the window had no recent movement. |
+
+> **Drift detection scope.** <a id="drift-detection-scope"></a>The `drifting` bucket is a deterministic first-pass detector, not a comprehensive agent-safety scanner. It currently fires on exactly three rule families:
+>
+> - **Privileged-path access** — any tool touching `.ssh`, `.aws`, `.kube`, `/etc/shadow`, or `/private/var`.
+> - **Shell-piped network fetch** — `curl`/`wget` piped into `sh`/`bash`/`zsh` (anchored at command start).
+> - **Write outside the repo root** — a `Write`/`Edit` to a path outside the session's `cwd` (or, with no repo root, outside `/tmp`, `/var`, `~`).
+>
+> So **`drifting` means "a known risky pattern fired" — not "this session is safe."** It does **not** yet cover `bash <(curl …)`, `curl -o … && sh …`, PowerShell `iwr | iex`, `python -c`/`node -e` download-and-exec, package install hooks, credential exfiltration through ordinary files, or API-driven network actions. Treat a clean run as "none of the implemented rules matched," and pair AgentPulse with the rest of the agent-gov suite for deeper gating.
 
 ## What makes it different
 
@@ -92,13 +100,17 @@ agentpulse live [options]
 | `--refresh <duration>` | `30s` | Background refresh cadence. Watcher fires sub-second on file changes regardless. |
 | `--roots <p1,p2,...>` | platform defaults | Override discovery roots (comma-separated) |
 | `--stale <duration>` | `1h` | Skip sessions older than this |
-| `--hide-idle` | off | Hide sessions with no activity in the window |
-| `--max-sessions <N>` | `10` | Cap the displayed list |
+| `--max-depth <N>` | unbounded | Cap discovery recursion depth below each root |
+| `--exclude <d1,d2,…>` | none | Directory names to skip during discovery (e.g. `node_modules,.git`) |
+| `--hide-idle` | off | Hide sessions with no activity in the window (also honored with `--once`) |
+| `--max-sessions <N>` | `10` | Cap the list. With `--once` this is display-only — gating still considers every session. |
 | `--show-subagents` | off | Include `agent-<hex>` SDK-spawned subagent transcripts |
 | `--no-detectors` | off | Skip the drifting bucket entirely |
 | `--once` | off | Headless snapshot mode. Runs once, prints, exits. |
 | `--format <fmt>` | `text` | With `--once`: `text` or `json`. |
 | `--strict` | off | With `--once`: exit 1 if any session is `drifting` or `stuck`. |
+| `--fail-on-error` | off | With `--once --strict`: also exit 1 if a session failed to analyze (unreadable/corrupt transcript). |
+| `--redact <mode>` | `none` | Redact transcript-derived paths from `--once` output: `none`, `paths`, `all`. |
 | `--notify <mode>` | `none` | Local notification on transition into `drifting`/`stuck`: `none`, `bell`, `os`, `both`. |
 
 **Keyboard:**
@@ -177,6 +189,12 @@ Best-effort: missing OS notification utilities are a silent no-op rather than a 
 ```
 
 The action runs `agentpulse live --once` against the provided transcript directory, writes a markdown summary to the GitHub step summary, optionally posts a sticky PR comment, and fails the workflow when `strict: true` and any session is `drifting` or `stuck`.
+
+By default (`fail-on-error: true`) the gate **also** fails when a transcript can't be analyzed (unreadable or corrupt), so a governance check can't pass green when its own analysis never ran — set `fail-on-error: false` to make analysis errors advisory. Other inputs: `redact` (`none`/`paths`/`all`), `max-depth` and `exclude` (bound discovery on broad dirs), plus `hide-idle`, `max-sessions`, `no-detectors`, and `show-subagents`.
+
+> **Supply chain.** The Action executes the **published npm package** `@conalh/agentpulse@<version>`, not the checked-out action source. Pinning `Conalh/AgentPulse@<ref>` pins only the version *string*; the code that runs — and its semver-compatible dependencies (e.g. `agent-gov-core ^1.x`, which owns transcript parsing) — resolves from the npm registry at run time. The registry and those floating deps are part of your trust boundary. For a fully reproducible pipeline, pin to an exact version and vet the published package.
+
+> **Privacy.** The step summary and PR comment contain transcript-derived content — project labels, verdicts, drift counts, and one-line narratives that can include file paths, path clusters, and topic keywords. The JSON snapshot additionally carries `verdict.signals` and the full transcript path. Don't run the Action on transcripts that may contain secrets, private prompts, or sensitive project names against an untrusted output destination without `redact: paths` (or `all`), and don't upload the raw JSON as a public artifact unredacted.
 
 ### Raw CLI
 
