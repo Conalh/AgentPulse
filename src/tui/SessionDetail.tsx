@@ -11,6 +11,7 @@ import type { SessionState } from '../types.js';
 import { colorFor, isLowConfidence, pillFor } from './theme.js';
 import { formatAgo, formatDelta } from './duration.js';
 import { sparkline } from './sparkline.js';
+import { fallbackLabel } from './SessionList.js';
 
 /**
  * v0.5.3: self-clocking footer that owns its own 1 s interval. Replaces
@@ -150,7 +151,13 @@ function SessionDetailInner({
 
   const sess = state.session;
   const recap = state.recap;
-  const projectLabel = sess.projectName ?? sess.id;
+  // Mirror the list row's label resolution (fallbackLabel + alias prefix)
+  // so the same session reads identically in both panes. Using the raw
+  // `projectName ?? id` here skipped the path-inference fallback (showing a
+  // hex id where the list shows e.g. "AgentPulse"), broke on an empty-string
+  // projectName, and ignored a user-set rename alias.
+  const baseLabel = fallbackLabel(state);
+  const projectLabel = state.alias ? `${state.alias} · ${baseLabel}` : baseLabel;
   const verdict = recap?.verdict;
   const bucket = verdict?.bucket;
   const confidence = verdict?.confidence ?? 0;

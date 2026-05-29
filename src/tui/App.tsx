@@ -213,17 +213,20 @@ export function App({
     };
   }, [orchestrator, watcher]);
 
-  // Wall-clock tick — used by the whitelist-preview countdown banner.
-  // v0.5.3: the "Xs ago" labels in SessionList/SessionDetail no longer
-  // consume this tick (they're self-clocking via <TimeAgo> / RefreshFooter
-  // now). App still re-renders each second so the countdown stays current,
-  // but the children are React.memo'd against props that don't include
-  // `now`, so they don't re-diff on every tick.
+  // Wall-clock tick — drives ONLY the whitelist-preview countdown banner
+  // (its sole consumer; see the render block below). v0.5.3 made the
+  // "Xs ago" labels self-clocking via <TimeAgo>/RefreshFooter, so this
+  // tick no longer feeds them. We therefore only run the interval while a
+  // preview is actually showing — otherwise App would reconcile every
+  // second for a banner that isn't on screen. The initial setNow keeps the
+  // first countdown frame from rendering a stale (too-large) second count.
   useEffect(() => {
+    if (!whitelistPreview) return;
+    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     id.unref?.();
     return () => clearInterval(id);
-  }, []);
+  }, [whitelistPreview]);
 
   // v0.4.8: auto-expire the whitelist preview when its window elapses.
   // The "any key cancels" branch in useInput handles the common case;

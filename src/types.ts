@@ -259,7 +259,7 @@ export interface DiscoverOptions {
    *  pin to specific directories. */
   roots?: string[];
   /** Skip sessions whose lastModified is older than this many ms ago.
-   *  Default: 24 hours. Use Infinity to disable. */
+   *  Default: 1 hour (DEFAULT_STALE_MS). Use Infinity to disable. */
   staleMs?: number;
 }
 

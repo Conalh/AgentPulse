@@ -400,9 +400,9 @@ function parseCodexCustomToolLine(parsed: unknown): TranscriptEvent[] | null {
 }
 
 /**
- * Drop the cached state for `path`. Called by the watcher when a file
- * is removed, and exposed for tests + tools that need to force a full
- * re-read on the next call.
+ * Drop the cached state for `path`. Called by the orchestrator when it
+ * handles a watcher 'remove' event, and exposed for tests + tools that
+ * need to force a full re-read on the next call.
  */
 export function evictParseCache(path: string): void {
   cache.delete(path);

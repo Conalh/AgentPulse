@@ -33,7 +33,15 @@ The incremental tail-reader (`parseCache.ts`) tracks a **byte** offset of the la
 
 ### Changed — internal duplication cleanup
 
-Default timing constants (`DEFAULT_WINDOW_MS`, `DEFAULT_REFRESH_INTERVAL_MS`, `DEFAULT_STALE_MS`) were re-spelled as literals across five files with two different spellings of the same value; they now live in `src/defaults.ts` and are imported everywhere. The `agent_pulse.live_drift_<slug>` namespace convention was likewise built in one place and parsed back with two divergent copies (one using a magic `+7`); a new `src/drift.ts` owns the prefix plus both directions (`driftKind` / `driftSlug`). No behaviour change. Also corrected stale comments (orchestrator coalescing "exactly once" → "~2 pulses max", the `exploring` bucket's "no edits yet", and stacked JSDoc on the exceptions loader).
+Default timing constants (`DEFAULT_WINDOW_MS`, `DEFAULT_REFRESH_INTERVAL_MS`, `DEFAULT_STALE_MS`) were re-spelled as literals across five files with two different spellings of the same value; they now live in `src/defaults.ts` and are imported everywhere. The `agent_pulse.live_drift_<slug>` namespace convention was likewise built in one place and parsed back with two divergent copies (one using a magic `+7`); a new `src/drift.ts` owns the prefix plus both directions (`driftKind` / `driftSlug`). No behaviour change. Also corrected stale comments (orchestrator coalescing "exactly once" → "~2 pulses max", the `exploring` bucket's "no edits yet", stacked JSDoc on the exceptions loader, the `DiscoverOptions.staleMs` default documented as "24 hours" when it is 1 hour, and `evictParseCache`'s "called by the watcher" — it's the orchestrator reacting to a watcher `remove` event).
+
+### Fixed — the TUI re-rendered every second even with nothing to animate
+
+`App`'s 1 s wall-clock interval drives only the whitelist-preview countdown banner, but it ran unconditionally for the whole session — so the root reconciled every second (children bail out via `React.memo`, but the parent render itself doesn't), the exact thrash the v0.5.3 self-clocking-footer refactor set out to remove. The interval now runs only while a preview banner is on screen.
+
+### Fixed — session detail header disagreed with its own list row
+
+The detail pane resolved its title as `projectName ?? id`, while the session list, the sort key, and the headless `--once` snapshot all use `fallbackLabel()`. So the same session could read as a 12-char hex id in the detail header but as the path-inferred name (e.g. "AgentPulse") in the list, an empty `projectName` rendered as a blank header, and — most visibly — a user's rename **alias** updated the list row but not the detail header. The detail pane now shares `fallbackLabel()` and applies the same alias prefix.
 
 ## [0.7.1] — 2026-05-28
 
