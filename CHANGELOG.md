@@ -9,7 +9,9 @@ and add the title to scripts/backfill-releases.mjs so the GitHub Release can
 be cut from this section. See docs/RELEASING.md.
 -->
 
-## [Unreleased]
+## [0.7.2] — 2026-05-28
+
+A correctness-and-consistency pass across the classifier pipeline and the TUI. Several rules silently mis-fired on real (non-synthetic) sessions — duplicated verification vocabulary across three layers, a `stuck_loop` that never triggered on actual transcripts, prose-only sessions flagged as `stuck`, and an incremental parser that double-counted events on any non-ASCII transcript — alongside internal de-duplication of constants/namespaces and two TUI render/label fixes.
 
 ### Fixed — verification vocabulary was duplicated across three layers
 

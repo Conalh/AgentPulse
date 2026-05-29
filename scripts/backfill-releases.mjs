@@ -40,6 +40,7 @@ const TITLES = {
   '0.6.1': 'Regression armor — property tests + golden corpus + classifier bug fix',
   '0.6.2': 'Codex external inspection fixes (cross-runtime file-paths + relative path drift)',
   '0.7.0': 'Native Antigravity session tracking support',
+  '0.7.2': 'Classifier + parse-cache correctness pass (multibyte fix, dedup, fewer false positives)',
 };
 
 const VERSIONS = Object.keys(TITLES);
