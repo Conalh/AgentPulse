@@ -206,7 +206,7 @@ Deterministic pipeline. Each layer is pure where it can be; all layers share the
 
 | Layer | File | Input -> Output |
 | --- | --- | --- |
-| 1. Parser | `agent-gov-core/parsers/` (v1.1.0+) | Claude Code / Cursor / Codex JSONL -> `TranscriptEvent[]` |
+| 1. Parser | `agent-gov-core/parsers/` (v1.1.0+) | Claude Code / Cursor / Codex / Antigravity JSONL -> `TranscriptEvent[]` |
 | 2. Enrichment | `src/enrich.ts` | events -> keywords, cwd-relative path clusters, action classes |
 | 2.5. Sequences | `src/sequences.ts` | events -> ordered-pattern signal (`tdd_loop` / `stuck_loop` / `refuse_to_verify` / `exploratory_edit`) |
 | 3. Outcome | `src/trajectory.ts` | events -> verification trend, user tone, completion verbs, idle gap |
@@ -221,6 +221,7 @@ Live infrastructure on top: `src/sessions/` discovery/watcher, `src/orchestrator
 - **Deterministic.** Same transcript window in, same verdict out. No model drift, API outages, or rate limits.
 - **Live sibling to SessionTrail.** AgentPulse is for watching now; SessionTrail is for PR-time transcript review.
 - **Substrate-built.** Uses [`agent-gov-core`](https://github.com/Conalh/agent-gov-core) primitives where the contract overlaps.
+- **Tested.** 244 tests (`npm test`), including hand-rolled **property tests** (a seeded, replayable PRNG, 200 iterations per invariant, no `fast-check` dependency) over the pure classifier layers, and a **labeled golden-replay corpus** — 13 transcript fixtures pinning all six trajectory buckets across the Claude Code, Cursor, Codex, and Antigravity runtimes, so a rule-tree tweak that flips a verdict is caught in CI.
 
 ## Windows terminal note
 
