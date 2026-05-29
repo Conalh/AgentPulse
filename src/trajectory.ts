@@ -19,6 +19,7 @@ import {
   extractFilePath as extractFilePathFromInput,
 } from './normalize.js';
 import { classifyResultText, isVerificationCommand } from './verification.js';
+import { driftKind } from './drift.js';
 import type {
   EnrichedWindow,
   OutcomeSignal,
@@ -326,7 +327,7 @@ function buildDrift(
   // pattern, but that's a known v0.1 compromise.
   const drift: Finding = {
     tool: 'session_trail',
-    kind: `agent_pulse.live_drift_${slug}`,
+    kind: driftKind(slug),
     severity: 'high',
     message,
     data: {

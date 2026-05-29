@@ -29,6 +29,7 @@ export { analyzeSequences } from './sequences.js';
  * substitute an intermediate stage.
  */
 import { parseTranscriptDir } from 'agent-gov-core';
+import { DEFAULT_WINDOW_MS } from './defaults.js';
 import { enrichWindow } from './enrich.js';
 import { classifyTrajectory, readOutcomeSignal } from './trajectory.js';
 import { analyzeSequences } from './sequences.js';
@@ -98,7 +99,7 @@ function profileEnabled(): boolean {
 
 export async function pulse(opts: PulseOptions): Promise<PulseRecap> {
   const endAt = opts.endAt ?? Date.now();
-  const windowMs = opts.windowMs ?? 20 * 60 * 1000;
+  const windowMs = opts.windowMs ?? DEFAULT_WINDOW_MS;
   const startAt = endAt - windowMs;
 
   // Profile marker — only allocate when enabled so the hot path is

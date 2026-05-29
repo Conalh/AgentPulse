@@ -14,6 +14,7 @@ import { discoverSessions } from './sessions/index.js';
 import { isSubagentTranscript } from './sessions/subagents.js';
 import { computeDisambigSuffixes } from './labels.js';
 import { pulse } from './index.js';
+import { DEFAULT_STALE_MS, DEFAULT_WINDOW_MS } from './defaults.js';
 import { createNotifier } from './notifications.js';
 import type {
   LiveOptions,
@@ -97,9 +98,9 @@ interface OnceReport {
  * the caller handles upstream).
  */
 export async function runOnceMode(opts: LiveOptions): Promise<number> {
-  const windowMs = opts.windowMs ?? 20 * 60_000;
+  const windowMs = opts.windowMs ?? DEFAULT_WINDOW_MS;
   const detectorsEnabled = opts.detectorsEnabled ?? true;
-  const staleMs = opts.staleMs ?? 1 * 3_600_000;
+  const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
   const discoveryRoots = opts.discoveryRoots;
   const format = opts.format ?? 'text';
   const strict = opts.strict ?? false;

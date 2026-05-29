@@ -96,7 +96,7 @@ export interface OutcomeSignal {
 
 export type TrajectoryBucket =
   | 'converging'   // narrowing focus, editing, verifications improving
-  | 'exploring'    // wide reads, no edits yet, user hasn't given direction
+  | 'exploring'    // wide reads, usually no edits yet, no clear direction
   | 'stuck'        // many edits, verifications not improving, user re-asking
   | 'done'         // completion signal + idle gap
   | 'drifting'     // gov-suite detectors firing in the live window

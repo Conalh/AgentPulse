@@ -10,15 +10,18 @@
  *    and avoids EventEmitter's max-listener warnings when the TUI subscribes
  *    multiple components.
  *  - Per-session refresh coalescing: every state carries an `inFlight`
- *    promise. If `refresh()` is called while one is running, the second
- *    caller awaits the in-flight promise and returns — pulse() is invoked
- *    exactly once per overlapping batch. This shields us from a watcher
- *    that emits 5 'change' events in 100ms.
+ *    promise. If `refresh()` is called while one is running, the caller
+ *    marks the state dirty and awaits the in-flight promise; that pulse's
+ *    `.finally` re-fires once to pick up the change. So a watcher flood
+ *    (5 'change' events in 100ms) collapses to at most ~2 pulses per
+ *    overlapping batch — the in-flight one plus a single re-fire — without
+ *    ever dropping a file change. See `refreshInternal`.
  *  - Per-session timers fire independently — no global tick — so a slow
  *    pulse on one session never blocks refreshes on another.
  */
 
 import { pulse } from './index.js';
+import { DEFAULT_REFRESH_INTERVAL_MS, DEFAULT_WINDOW_MS } from './defaults.js';
 import { loadAliases } from './aliases.js';
 import { applyHysteresis, initialHysteresis } from './hysteresis.js';
 import type { HysteresisState } from './hysteresis.js';
@@ -51,9 +54,6 @@ interface InternalState extends SessionState {
    *  Initialized lazily on the first successful pulse. */
   hysteresis?: HysteresisState;
 }
-
-const DEFAULT_WINDOW_MS = 20 * 60 * 1000;
-const DEFAULT_REFRESH_INTERVAL_MS = 30_000;
 
 export function createOrchestrator(
   opts: OrchestratorOptions = {}

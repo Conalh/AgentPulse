@@ -13,6 +13,7 @@ import type {
   TrajectoryVerdict,
   PulseRecap,
 } from './types.js';
+import { driftSlug } from './drift.js';
 
 export function humanDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '0 seconds';
@@ -254,10 +255,11 @@ function renderDone(enriched: EnrichedWindow, outcome: OutcomeSignal): string {
 }
 
 function renderIdle(enriched: EnrichedWindow): string {
-  // Find the freshness from the events directly — the trajectory layer
-  // already computed this, but the narrative renderer doesn't take the
-  // outcome's freshness as input, so we recompute it from the enriched
-  // window. Cheap.
+  // Freshness = how long since the last event. The trajectory layer
+  // computes its own freshness to pick the idle bucket, but that value
+  // isn't threaded onto OutcomeSignal, so we recompute here from the
+  // enriched window (cheap). When no event carries a usable timestamp we
+  // fall back to the full window duration — "quiet for the whole window".
   let lastEventMs = 0;
   for (const ev of enriched.events) {
     if (typeof ev.timestamp === 'number' && ev.timestamp > lastEventMs) {
@@ -321,13 +323,12 @@ function renderDrifting(enriched: EnrichedWindow, verdict: TrajectoryVerdict): s
 
   // Categorize. Kind slugs come from trajectory.ts buildDrift() as
   // `agent_pulse.live_drift_<slug>`; we look at the suffix.
-  const slugs = verdict.drifts.map((d) => {
-    const k = String(d.kind ?? '');
-    const idx = k.lastIndexOf('_drift_');
-    return idx >= 0 ? k.slice(idx + 7) : k;
-  });
+  const slugs = verdict.drifts.map((d) => driftSlug(d.kind));
+  // Mirror PRIVILEGED_PATH_RULES in trajectory.ts: ssh_path, aws_path,
+  // kube_path, etc_shadow, private_var. (No gnupg/credential rule exists,
+  // so don't claim coverage for them.)
   const hasPrivileged = slugs.some((s) =>
-    /(ssh|aws|kube|gnupg|credential|shadow|private)/i.test(s)
+    /(ssh|aws|kube|shadow|private)/i.test(s)
   );
   const hasShellExfil = slugs.some((s) => /shell_exfil/i.test(s));
   const hasOutsideWrite = slugs.some((s) => /outside_repo|write_outside/i.test(s));
@@ -336,7 +337,7 @@ function renderDrifting(enriched: EnrichedWindow, verdict: TrajectoryVerdict): s
   if (hasShellExfil) {
     lede = '⚠ Your agent piped network fetch into a shell';
   } else if (hasPrivileged) {
-    lede = '⚠ Your agent touched a privileged path (SSH/AWS/credentials/system config)';
+    lede = '⚠ Your agent touched a privileged path (SSH/AWS/Kube/system paths)';
   } else if (hasOutsideWrite) {
     lede = '⚠ Your agent wrote outside the repo root';
   } else {

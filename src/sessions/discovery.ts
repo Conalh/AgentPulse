@@ -16,11 +16,7 @@ import type {
   DiscoveredSession,
   Runtime,
 } from '../types.js';
-
-// v0.2.1: tightened from 24h. 24h was picking up every transcript touched in
-// the last day, drowning the dashboard in idle sessions. 1h matches the
-// "what's actually happening right now" intent. Override via --stale on the CLI.
-const DEFAULT_STALE_MS = 60 * 60 * 1000;
+import { DEFAULT_STALE_MS } from '../defaults.js';
 
 interface Root {
   /** Absolute path on disk. */

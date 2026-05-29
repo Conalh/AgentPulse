@@ -146,20 +146,30 @@ export async function readWindowFromCache(
 
   // Read the new bytes only.
   const handle = await open(path, 'r');
-  let raw: string;
+  let buf: Buffer;
   try {
-    const buf = Buffer.alloc(lengthToRead);
+    buf = Buffer.alloc(lengthToRead);
     await handle.read(buf, 0, lengthToRead, fromOffset);
-    raw = buf.toString('utf8');
   } finally {
     await handle.close();
   }
 
-  // Find the last complete newline. Anything after it is an incomplete
-  // line (the agent is mid-write); defer to the next read.
-  const lastNewlineIdx = raw.lastIndexOf('\n');
-  const completeBlock = lastNewlineIdx >= 0 ? raw.slice(0, lastNewlineIdx + 1) : '';
+  // Find the last complete newline IN THE BUFFER (byte space). Anything
+  // after it is an incomplete line (the agent is mid-write); defer to the
+  // next read. We search the raw buffer for the `\n` byte (0x0A) rather
+  // than decoding to a string first and using a string index, because a
+  // UTF-16 code-unit index is NOT a byte offset: any multibyte char
+  // (emoji, accents, CJK) makes the two diverge, and we add `consumedBytes`
+  // to a byte offset (`endByteOffset`). Getting that wrong rewinds the next
+  // read into the middle of already-parsed lines and re-appends them as
+  // duplicate events. 0x0A can only ever be a standalone newline in valid
+  // UTF-8 (no continuation/lead byte is < 0x80), so the byte search is
+  // exact, and decoding `[0, consumedBytes)` is guaranteed to end on a
+  // char boundary.
+  const lastNewlineIdx = buf.lastIndexOf(0x0a);
   const consumedBytes = lastNewlineIdx >= 0 ? lastNewlineIdx + 1 : 0;
+  const completeBlock =
+    consumedBytes > 0 ? buf.toString('utf8', 0, consumedBytes) : '';
 
   if (!entry) {
     entry = {

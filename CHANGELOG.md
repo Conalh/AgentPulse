@@ -23,6 +23,18 @@ Layer 2.5's `detectStuckLoop` read the verification exit code off the Bash `tool
 
 A documentation session (5+ `.md` edits, no test command) tripped `refuse_to_verify` and flipped to `stuck`, because the detector counted every edit toward its ≥4 threshold. Editing a doc set legitimately has nothing to verify, so `detectRefuseToVerify` now counts only code edits — prose extensions (`.md`/`.mdx`/`.markdown`/`.txt`/`.rst`/`.adoc`/`.org`) don't count, and unknown paths still count as code (conservative toward firing). New `doc-edits-no-tests` corpus fixture guards the converging outcome; a `.ssh-keys` cwd fixture guards that the privileged-path detector doesn't misfire on hyphenated lookalikes.
 
+### Fixed — incremental parse cache duplicated events on any non-ASCII session
+
+The incremental tail-reader (`parseCache.ts`) tracks a **byte** offset of the last complete line, but it derived how far it advanced from a UTF-16 **string** index (`raw.lastIndexOf('\n')`). Any multibyte character — emoji, accents, CJK, all common in agent prose, code, and tool output — made the two diverge, so the next read rewound *before* the true position, re-parsed already-consumed lines, and appended them as duplicate events. Those duplicates inflate the edit/verification counts the classifier runs on, so the live dashboard could land on the wrong bucket for essentially any real session. (The whole-file `recap` path was unaffected; this was incremental-only — the live TUI and orchestrator.) The reader now finds the newline in the raw buffer (`0x0A` can't appear inside a UTF-8 multibyte sequence) so the offset is exact. New regression fixture reproduces the duplicate.
+
+### Fixed — narrative privileged-path lede claimed coverage the detector lacked
+
+`renderDrifting`'s privileged-path matcher tested for `gnupg` and `credential`, but `PRIVILEGED_PATH_RULES` only ever emits `ssh_path` / `aws_path` / `kube_path` / `etc_shadow` / `private_var` — so those terms were dead and the lede over-promised "credentials." The matcher and wording now reflect what's actually flagged (SSH/AWS/Kube/system paths).
+
+### Changed — internal duplication cleanup
+
+Default timing constants (`DEFAULT_WINDOW_MS`, `DEFAULT_REFRESH_INTERVAL_MS`, `DEFAULT_STALE_MS`) were re-spelled as literals across five files with two different spellings of the same value; they now live in `src/defaults.ts` and are imported everywhere. The `agent_pulse.live_drift_<slug>` namespace convention was likewise built in one place and parsed back with two divergent copies (one using a magic `+7`); a new `src/drift.ts` owns the prefix plus both directions (`driftKind` / `driftSlug`). No behaviour change. Also corrected stale comments (orchestrator coalescing "exactly once" → "~2 pulses max", the `exploring` bucket's "no edits yet", and stacked JSDoc on the exceptions loader).
+
 ## [0.7.1] — 2026-05-28
 
 Session-noise and cross-runtime accuracy pass, driven by real multi-terminal session sets. The TUI had quietly accumulated fixes that the headless `agentpulse live --once` path never inherited, so machine-readable output and `--notify` diverged from what the dashboard showed.

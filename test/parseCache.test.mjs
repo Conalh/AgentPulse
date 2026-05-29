@@ -177,6 +177,37 @@ test('readWindowFromCache: handles an incomplete final line by deferring it to t
   }
 });
 
+test('readWindowFromCache: multibyte content does not corrupt the tail-read offset (no duplicate events)', async () => {
+  // Regression: `endByteOffset` is a BYTE offset, but the code used to
+  // derive how much it advanced from a UTF-16 string index. Any multibyte
+  // char (emoji, accents, CJK) makes the two diverge, rewinding the next
+  // tail-read into already-parsed bytes and re-appending whole lines as
+  // duplicates. We force that here: a first line heavy with emoji creates
+  // a byte/code-unit drift larger than the short second line, so a buggy
+  // tail-read re-parses the second line. The fixed code searches the
+  // buffer for the `\n` byte, so the offset stays exact.
+  clearParseCache();
+  const dir = mkTmp();
+  const path = join(dir, 'session.jsonl');
+  try {
+    const heavy = '😀'.repeat(100); // 100 × (4 bytes / 2 code units) → 200-byte drift
+    writeFileSync(path, userLine(T0 + 1000, heavy) + userLine(T0 + 2000, 'beta'));
+    const r1 = await readWindowFromCache(path, T0, T0 + WINDOW_MS, { silent: true });
+    assert.equal(r1.length, 2);
+    assert.deepEqual(r1.map((e) => e.text), [heavy, 'beta']);
+
+    appendFileSync(path, userLine(T0 + 3000, 'gamma'));
+    const future = new Date(Date.now() + 2_000);
+    utimesSync(path, future, future);
+
+    const r2 = await readWindowFromCache(path, T0, T0 + WINDOW_MS, { silent: true });
+    assert.equal(r2.length, 3, 'no duplicate events from a corrupted byte offset');
+    assert.deepEqual(r2.map((e) => e.text), [heavy, 'beta', 'gamma']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test('readWindowFromCache: rotation/truncation (file shrinks) resets the cache and re-reads', async () => {
   clearParseCache();
   const dir = mkTmp();

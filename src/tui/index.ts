@@ -11,6 +11,11 @@ import { render } from 'ink';
 import { discoverSessions, createSessionWatcher } from '../sessions/index.js';
 import { createOrchestrator } from '../orchestrator.js';
 import { createNotifier } from '../notifications.js';
+import {
+  DEFAULT_REFRESH_INTERVAL_MS,
+  DEFAULT_STALE_MS,
+  DEFAULT_WINDOW_MS,
+} from '../defaults.js';
 import type {
   DiscoveredSession,
   LiveOptions,
@@ -21,11 +26,10 @@ import type {
 import { App } from './App.js';
 
 export async function runLiveTui(opts: LiveOptions = {}): Promise<void> {
-  const windowMs = opts.windowMs ?? 20 * 60_000;
-  const refreshIntervalMs = opts.refreshIntervalMs ?? 30_000;
+  const windowMs = opts.windowMs ?? DEFAULT_WINDOW_MS;
+  const refreshIntervalMs = opts.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
   const detectorsEnabled = opts.detectorsEnabled ?? true;
-  // v0.2.1: 1h default (was 24h). 24h surfaced too many idle transcripts.
-  const staleMs = opts.staleMs ?? 1 * 3_600_000;
+  const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
   const discoveryRoots = opts.discoveryRoots;
   const hideIdle = opts.hideIdle ?? false;
   const maxSessions = opts.maxSessions ?? 10;

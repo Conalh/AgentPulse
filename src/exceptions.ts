@@ -91,20 +91,11 @@ function resolveExceptionsPath(searchPath: string): string {
 }
 
 /**
- * Load the fingerprints from a session's exceptions file.
+ * Pure parse of the exceptions-file JSON into a fingerprint Set.
  *
- * Returns an empty Set when:
- *  - `searchPath` is undefined/empty (no session cwd available)
- *  - the file is missing
- *  - the file is unparseable JSON
- *  - the file is parseable but doesn't match the expected shape
- *
- * All failure modes are silent by design — see file header.
- */
-/**
- * v0.5.6: parse goes through the mtime-keyed jsonCache so successive
- * pulse() invocations on the same session don't re-read+reparse the
- * same `.agentpulse-exceptions.json` on each refresh.
+ * Throws on invalid JSON (the caller's cache fallback turns that into an
+ * empty Set — see `loadExceptions`). Returns an empty Set for
+ * valid-but-wrong-shape input (missing/non-array `exceptions`).
  */
 function parseExceptionsFile(raw: string): Set<string> {
   const parsed = JSON.parse(raw) as unknown;
@@ -125,6 +116,19 @@ function parseExceptionsFile(raw: string): Set<string> {
   return out;
 }
 
+/**
+ * Load the fingerprints from a session's exceptions file.
+ *
+ * Returns an empty Set when:
+ *  - `searchPath` is undefined/empty (no session cwd available)
+ *  - the file is missing
+ *  - the file is unparseable JSON
+ *  - the file is parseable but doesn't match the expected shape
+ *
+ * All failure modes are silent by design — see file header. v0.5.6: reads
+ * go through the mtime-keyed jsonCache so successive pulse() invocations on
+ * the same session don't re-read+reparse the same file on each refresh.
+ */
 export async function loadExceptions(searchPath?: string): Promise<Set<string>> {
   if (!searchPath) return new Set();
   const path = resolveExceptionsPath(searchPath);

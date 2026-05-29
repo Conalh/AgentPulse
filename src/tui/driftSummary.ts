@@ -16,13 +16,10 @@
  */
 
 import type { Finding } from 'agent-gov-core';
+import { driftSlug } from '../drift.js';
 
 export function summarizeDriftKinds(drifts: readonly Finding[]): string {
-  const shortKinds = drifts.map((d) => {
-    const k = String(d.kind ?? '');
-    const idx = k.lastIndexOf('_drift_');
-    return idx >= 0 ? k.slice(idx + '_drift_'.length) : k;
-  });
+  const shortKinds = drifts.map((d) => driftSlug(d.kind));
   if (shortKinds.length === 0) return '';
   if (shortKinds.length <= 2) return shortKinds.join(', ');
   return `${shortKinds[0]}, ${shortKinds[1]}, +${shortKinds.length - 2} more`;
