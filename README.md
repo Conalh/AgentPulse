@@ -1,5 +1,7 @@
 # AgentPulse
 
+[![npm version](https://img.shields.io/npm/v/@conalh/agentpulse?color=7dcfff)](https://www.npmjs.com/package/@conalh/agentpulse)
+[![CI](https://github.com/Conalh/AgentPulse/actions/workflows/ci.yml/badge.svg)](https://github.com/Conalh/AgentPulse/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-supported-7dcfff)](#)
 [![Cursor](https://img.shields.io/badge/Cursor-supported-7dcfff)](#)
@@ -167,7 +169,7 @@ Best-effort: missing OS notification utilities are a silent no-op rather than a 
 ### GitHub Action
 
 ```yaml
-- uses: Conalh/AgentPulse@v0.7.1
+- uses: Conalh/AgentPulse@v0.7.2
   with:
     transcript-dirs: agentpulse-transcripts
     strict: 'true'
