@@ -221,7 +221,7 @@ Live infrastructure on top: `src/sessions/` discovery/watcher, `src/orchestrator
 - **Deterministic.** Same transcript window in, same verdict out. No model drift, API outages, or rate limits.
 - **Live sibling to SessionTrail.** AgentPulse is for watching now; SessionTrail is for PR-time transcript review.
 - **Substrate-built.** Uses [`agent-gov-core`](https://github.com/Conalh/agent-gov-core) primitives where the contract overlaps.
-- **Tested.** 244 tests (`npm test`), including hand-rolled **property tests** (a seeded, replayable PRNG, 200 iterations per invariant, no `fast-check` dependency) over the pure classifier layers, and a **labeled golden-replay corpus** — 13 transcript fixtures pinning all six trajectory buckets across the Claude Code, Cursor, Codex, and Antigravity runtimes, so a rule-tree tweak that flips a verdict is caught in CI.
+- **Tested.** 245 tests (`npm test`), including hand-rolled **property tests** (a seeded, replayable PRNG, 200 iterations per invariant, no `fast-check` dependency) over the pure classifier layers, and a **labeled golden-replay corpus** — 13 transcript fixtures pinning all six trajectory buckets across the Claude Code, Cursor, Codex, and Antigravity runtimes, so a rule-tree tweak that flips a verdict is caught in CI.
 
 ## Windows terminal note
 
