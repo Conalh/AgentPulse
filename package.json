@@ -17,7 +17,7 @@
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
-    "assets/dashboard.svg",
+    "assets/demo.svg",
     "LICENSE",
     "README.md",
     "CHANGELOG.md"

@@ -9,7 +9,7 @@
 
 **A live trajectory dashboard for AI coding agent sessions.** AgentPulse watches local Claude Code, Cursor, and Codex transcripts and classifies what each agent is doing right now: `converging`, `exploring`, `stuck`, `done`, `drifting`, or `idle`.
 
-![AgentPulse dashboard — seven sessions, one selected and reading converging](./assets/dashboard.svg)
+![AgentPulse dashboard — a selected session cycles through converging, stuck, and drifting verdicts in real time](./assets/demo.svg)
 
 Drop it in a terminal next to your editor. You get an always-on read across local agent sessions without a model judge, hosted dashboard, telemetry, or outbound network calls.
 
