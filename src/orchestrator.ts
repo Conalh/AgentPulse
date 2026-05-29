@@ -155,12 +155,21 @@ export function createOrchestrator(
       // double-fired off that flicker. Now only the latest pulse's
       // bucket is exposed when it confirms what we already saw.
       //
-      // We damp ONLY the bucket on `recap.verdict.bucket`. Narrative,
-      // signals, drifts, and confidence stay tied to the latest pulse —
-      // so the user still sees "tests just started failing" in the
-      // narrative on the very next refresh even when the pill colour
-      // takes one more cycle to follow. The narrative is the truth; the
-      // pill is the consensus.
+      // We damp the bucket on `recap.verdict.bucket` and, when we override
+      // it, the confidence with it. Narrative, signals, and drifts stay
+      // tied to the latest pulse — so the user still sees "tests just
+      // started failing" in the narrative on the very next refresh even
+      // when the pill colour takes one more cycle to follow. The narrative
+      // is the truth; the pill is the consensus.
+      //
+      // Confidence is part of the pill, not the narrative, so it must track
+      // the bucket we actually show. Leaving the raw pulse's confidence in
+      // place during an override would attach a number computed for
+      // `rawBucket` to a pill showing `stableBucket` — e.g. a pill reading
+      // "converging · 0.85" where the 0.85 was the classifier's certainty
+      // about "stuck". We clamp to the min of what we last showed for the
+      // stable bucket and the dissenting reading, so a contested window can
+      // only lower our stated confidence, never inflate it.
       const rawBucket = recap.verdict.bucket;
       if (!state.hysteresis) {
         // First successful pulse — initialize. No dampening on entry.
@@ -169,12 +178,20 @@ export function createOrchestrator(
         const step = applyHysteresis(state.hysteresis, rawBucket);
         state.hysteresis = step.state;
         if (step.stableBucket !== rawBucket) {
-          // Surface the damped bucket. Construct a NEW verdict object so
-          // the original (unmodified) recap stays available to any caller
-          // that might want it later; same shape, just one field changed.
+          // Surface the damped bucket + damped confidence. Construct a NEW
+          // verdict object so the original (unmodified) recap stays
+          // available to any caller that might want it later. `state.recap`
+          // still holds the PRIOR recap here (we overwrite it below), so its
+          // confidence is what we last showed for the stable bucket.
+          const priorConfidence =
+            state.recap?.verdict.confidence ?? recap.verdict.confidence;
           recap = {
             ...recap,
-            verdict: { ...recap.verdict, bucket: step.stableBucket },
+            verdict: {
+              ...recap.verdict,
+              bucket: step.stableBucket,
+              confidence: Math.min(priorConfidence, recap.verdict.confidence),
+            },
           };
         }
       }

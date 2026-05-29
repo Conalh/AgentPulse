@@ -18,6 +18,7 @@ import {
   canonicalToolName,
   extractFilePath as extractFilePathFromInput,
 } from './normalize.js';
+import { classifyResultText, isVerificationCommand } from './verification.js';
 import type {
   EnrichedWindow,
   OutcomeSignal,
@@ -33,49 +34,6 @@ import type {
 // ─────────────────────────────────────────────────────────────────────
 // Layer 3 — outcome signal
 // ─────────────────────────────────────────────────────────────────────
-
-/** Verification command verbs that warrant trend-tracking. */
-const VERIFICATION_HINTS = [
-  'test',
-  'jest',
-  'mocha',
-  'vitest',
-  'pytest',
-  'lint',
-  'eslint',
-  'tsc',
-  'typecheck',
-  'type-check',
-  'build',
-  'cargo test',
-  'cargo check',
-  'go test',
-  'npm test',
-  'pnpm test',
-  'yarn test',
-  'make test',
-  'make check',
-  'rspec',
-  'phpunit',
-];
-
-const FAIL_PATTERNS: RegExp[] = [
-  /\bFAIL\b/,
-  /\bFAILED\b/,
-  /\bfailing\b/i,
-  /\d+\s+failed\b/i,
-  /\bTests?:\s*\d+\s*failed/i,
-  /\berror\b/i,
-];
-
-const PASS_PATTERNS: RegExp[] = [
-  /\bpassing\b/i,
-  /\bPASS\b/,
-  /\bPASSED\b/,
-  /\bTests?:\s*\d+\s*passed/i,
-  /\d+\s+passed\b/i,
-  /\bok\s+\d+/i,
-];
 
 const AFFIRMING_TOKENS = [
   'thanks',
@@ -126,11 +84,8 @@ function isVerificationEvent(ev: TranscriptEvent): boolean {
   // TDD shape on Codex produced `no_data`, mirroring the v0.6.1
   // tool_use vs tool_result bug at a different layer.
   if (canonicalToolName(ev.toolName) !== 'Bash') return false;
-  const cmd = String(
-    (ev.toolInput && (ev.toolInput.command as unknown)) ?? ''
-  ).toLowerCase();
-  if (!cmd) return false;
-  return VERIFICATION_HINTS.some((h) => cmd.includes(h));
+  const cmd = String((ev.toolInput && (ev.toolInput.command as unknown)) ?? '');
+  return isVerificationCommand(cmd);
 }
 
 /**
@@ -143,15 +98,7 @@ function verificationOutcome(ev: TranscriptEvent): 'pass' | 'fail' | null {
   if (typeof ev.toolResultExitCode === 'number') {
     return ev.toolResultExitCode === 0 ? 'pass' : 'fail';
   }
-  const text = ev.toolResultText ?? '';
-  if (!text) return null;
-  const hasFail = FAIL_PATTERNS.some((re) => re.test(text));
-  const hasPass = PASS_PATTERNS.some((re) => re.test(text));
-  // If both fire (e.g. "1 failed, 3 passed"), the failure dominates — that's
-  // how every test runner reports a red build.
-  if (hasFail) return 'fail';
-  if (hasPass) return 'pass';
-  return null;
+  return classifyResultText(ev.toolResultText);
 }
 
 function computeVerificationTrend(events: TranscriptEvent[]): VerificationTrend {

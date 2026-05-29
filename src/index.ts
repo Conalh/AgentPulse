@@ -59,14 +59,19 @@ export interface PulseOptions {
    *  path. When omitted, falls back to `repoRoot`. When neither is set,
    *  no exceptions are loaded — drift detection runs normally. */
   exceptionsPath?: string;
-  /** v0.6.0: pre-parsed events. When supplied, pulse() skips its own
-   *  parser invocation entirely and uses these events directly. The
-   *  orchestrator uses this to thread incrementally-parsed events into
-   *  the pipeline — same recap output, dramatically less I/O on long
-   *  sessions. CLI callers (`recap`, `live --once`) leave this unset
-   *  and get the normal whole-file parse. The events MUST already be
-   *  filtered to the [windowEnd - windowMs, windowEnd] window — pulse()
-   *  trusts the caller. */
+  /**
+   * @internal Orchestrator-only fast path; not part of the supported
+   * public API and may change without a semver bump.
+   *
+   * v0.6.0: pre-parsed events. When supplied, pulse() skips its own
+   * parser invocation entirely and uses these events directly. The
+   * orchestrator uses this to thread incrementally-parsed events into
+   * the pipeline — same recap output, dramatically less I/O on long
+   * sessions. CLI callers (`recap`, `live --once`) leave this unset
+   * and get the normal whole-file parse. The events MUST already be
+   * filtered to the [windowEnd - windowMs, windowEnd] window — pulse()
+   * trusts the caller.
+   */
   events?: TranscriptEvent[];
 }
 

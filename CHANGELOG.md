@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Under v1.0, minor versions may include breaking changes.
 
+<!--
+Convention: land unreleased work under `## [Unreleased]`. At release time,
+rename that header to `## [X.Y.Z] — YYYY-MM-DD`, bump package.json to match,
+and add the title to scripts/backfill-releases.mjs so the GitHub Release can
+be cut from this section. See docs/RELEASING.md.
+-->
+
+## [Unreleased]
+
+### Fixed — verification vocabulary was duplicated across three layers
+
+The set of commands that count as a "verification" (running tests, a type checker, a linter, or a build) and the pass/fail result-text tables were maintained as three divergent copies — one each in `enrich.ts`, `sequences.ts`, and `trajectory.ts`. The lists had genuinely drifted (`go vet`, `cargo clippy`, `mypy`, `ruff`, `gradle`, `mvn`, `npm run`, `playwright`, `prettier` were recognized by the sequence detector but not the verification-trend computation), so a command could count toward the edit→verify cycle but not the pass/fail trend — or vice versa — silently. All three layers now share `src/verification.ts` (`isVerificationCommand` + `classifyResultText`); the trend layer gains the tools it was missing and switches from a loose substring match to the precise word-boundary regex the other layers already used.
+
+### Fixed — `stuck_loop` never fired on real transcripts (only synthetic fixtures)
+
+Layer 2.5's `detectStuckLoop` read the verification exit code off the Bash `tool_use` event, but the parser emits `tool_use` and `tool_result` as separate events with the exit code on the `tool_result` (keyed by `toolUseId`). So every real session's verification outcome resolved to indeterminate, no failures were counted, and a wedged edit→fail→edit→fail loop silently degraded to a healthy `tdd_loop`. `analyzeSequences` now links `tool_result` outcomes by id — the same fix `computeVerificationTrend` got in v0.6.1 — so `stuck_loop` fires on real transcripts. Locked in by a new `expectedSequence` assertion on the golden corpus.
+
+### Fixed — prose-only sessions false-positived as `stuck`
+
+A documentation session (5+ `.md` edits, no test command) tripped `refuse_to_verify` and flipped to `stuck`, because the detector counted every edit toward its ≥4 threshold. Editing a doc set legitimately has nothing to verify, so `detectRefuseToVerify` now counts only code edits — prose extensions (`.md`/`.mdx`/`.markdown`/`.txt`/`.rst`/`.adoc`/`.org`) don't count, and unknown paths still count as code (conservative toward firing). New `doc-edits-no-tests` corpus fixture guards the converging outcome; a `.ssh-keys` cwd fixture guards that the privileged-path detector doesn't misfire on hyphenated lookalikes.
+
 ## [0.7.1] — 2026-05-28
 
 Session-noise and cross-runtime accuracy pass, driven by real multi-terminal session sets. The TUI had quietly accumulated fixes that the headless `agentpulse live --once` path never inherited, so machine-readable output and `--notify` diverged from what the dashboard showed.

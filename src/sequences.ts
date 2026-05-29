@@ -53,6 +53,7 @@ import {
   canonicalToolName,
   extractFilePath as extractFilePathFromInput,
 } from './normalize.js';
+import { classifyResultText, isVerificationCommand } from './verification.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // Action classification — local copy of the Layer 2 logic, scoped to
@@ -60,30 +61,6 @@ import {
 // avoids a circular import with src/enrich.ts and avoids re-exporting
 // classifyToolUse as a public API.
 // ─────────────────────────────────────────────────────────────────────
-
-const VERIFICATION_PATTERNS: readonly RegExp[] = [
-  /\bnpm\s+test\b/,
-  /\bnpm\s+run\b/,
-  /\bnpx\s+(vitest|jest|mocha|playwright|tsc|eslint|prettier)\b/,
-  /\byarn\s+(test|run|build|lint)\b/,
-  /\bpnpm\s+(test|run|build|lint)\b/,
-  /\bpytest\b/,
-  /\bpython\s+-m\s+pytest\b/,
-  /\bunittest\b/,
-  /\bcargo\s+(test|build|check|clippy)\b/,
-  /\bgo\s+(test|build|vet)\b/,
-  /\bmake\b/,
-  /\bvitest\b/,
-  /\bjest\b/,
-  /\beslint\b/,
-  /\btsc\b/,
-  /\bmypy\b/,
-  /\bruff\b/,
-  /\bgradle\b/,
-  /\bmvn\b/,
-  /\brake\s+test\b/,
-  /\bphpunit\b/,
-];
 
 function classifyEvent(ev: TranscriptEvent): ActionClass | null {
   if (ev.kind !== 'tool_use') return null;
@@ -105,10 +82,7 @@ function classifyEvent(ev: TranscriptEvent): ActionClass | null {
       return 'editing';
     case 'Bash': {
       const cmd = String(ev.toolInput?.['command'] ?? '');
-      for (const re of VERIFICATION_PATTERNS) {
-        if (re.test(cmd)) return 'verification';
-      }
-      return 'other';
+      return isVerificationCommand(cmd) ? 'verification' : 'other';
     }
     default:
       return null;
@@ -129,35 +103,13 @@ function extractFilePath(ev: TranscriptEvent): string | undefined {
  * "Failed" is the converse. `null` = indeterminate; treat as fail for the
  * stuck_loop check (conservative — if we can't tell, assume the worst).
  */
-const FAIL_PATTERNS: RegExp[] = [
-  /\bFAIL\b/,
-  /\bFAILED\b/,
-  /\bfailing\b/i,
-  /\d+\s+failed\b/i,
-  /\bTests?:\s*\d+\s*failed/i,
-  /\berror\b/i,
-];
-
-const PASS_PATTERNS: RegExp[] = [
-  /\bpassing\b/i,
-  /\bPASS\b/,
-  /\bPASSED\b/,
-  /\bTests?:\s*\d+\s*passed/i,
-  /\d+\s+passed\b/i,
-  /\bok\s+\d+/i,
-];
-
 function verificationPassed(ev: TranscriptEvent): boolean | null {
   if (typeof ev.toolResultExitCode === 'number') {
     return ev.toolResultExitCode === 0;
   }
-  const text = ev.toolResultText ?? '';
-  if (!text) return null;
-  const hasFail = FAIL_PATTERNS.some((re) => re.test(text));
-  const hasPass = PASS_PATTERNS.some((re) => re.test(text));
-  if (hasFail) return false;
-  if (hasPass) return true;
-  return null;
+  const outcome = classifyResultText(ev.toolResultText);
+  if (outcome === null) return null;
+  return outcome === 'pass';
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -168,6 +120,37 @@ interface ClassifiedEvent {
   ev: TranscriptEvent;
   cls: ActionClass;
   filePath?: string | undefined;
+  /**
+   * For verification events only: did the run pass? Resolved at
+   * classification time using the linked tool_result (see
+   * `resolveVerificationOutcome`). `undefined` for non-verification
+   * events; `null` when indeterminate even after linking.
+   */
+  verifyPassed?: boolean | null;
+}
+
+/**
+ * Resolve a verification event's pass/fail, falling back to the linked
+ * tool_result when the tool_use itself carries no outcome.
+ *
+ * On real parsed transcripts the parser emits tool_use and tool_result
+ * as SEPARATE events and the exit code lives on the tool_result. Reading
+ * the outcome off the Bash tool_use alone (as the detectors used to)
+ * yielded `null` for every real session — so stuck_loop never fired on
+ * anything but the synthetic test shape, silently degrading to tdd_loop.
+ * This is the same tool_use-vs-tool_result gap that bit Layer 3's
+ * `computeVerificationTrend` in v0.6.1; we mirror its linking here.
+ */
+function resolveVerificationOutcome(
+  ev: TranscriptEvent,
+  resultByToolUseId: Map<string, TranscriptEvent>
+): boolean | null {
+  let outcome = verificationPassed(ev);
+  if (outcome === null && ev.toolUseId) {
+    const linked = resultByToolUseId.get(ev.toolUseId);
+    if (linked) outcome = verificationPassed(linked);
+  }
+  return outcome;
 }
 
 /**
@@ -239,7 +222,7 @@ function detectStuckLoop(
     const j = findNextVerificationIdx(seq, i + 1, 3);
     if (j < 0) continue;
     const verifyEv = seq[j]!;
-    const passed = verificationPassed(verifyEv.ev);
+    const passed = verifyEv.verifyPassed ?? null;
     // Conservative: only count clear failures. Indeterminate doesn't count
     // as "stuck" (would be a false positive for runners with no parseable
     // output).
@@ -264,19 +247,51 @@ function detectStuckLoop(
 }
 
 /**
- * refuse_to_verify: ≥4 editing events with ZERO verification events
- * interleaved anywhere in the window.
+ * Prose file extensions. Edits to these don't count toward the
+ * refuse_to_verify threshold — a docs-only session legitimately has no
+ * test command to run, so "edited a lot, verified nothing" is the
+ * expected shape, not a risk signal. Code edits are what we care about.
+ */
+const PROSE_EXTENSIONS: ReadonlySet<string> = new Set([
+  '.md',
+  '.mdx',
+  '.markdown',
+  '.txt',
+  '.rst',
+  '.adoc',
+  '.org',
+]);
+
+/**
+ * Is this edit targeting a prose file? Unknown/missing paths count as
+ * code (conservative — we'd rather fire refuse_to_verify on an
+ * unclassifiable edit than silently suppress a real "writing code
+ * without testing" signal).
+ */
+function isProseEdit(filePath: string | undefined): boolean {
+  if (!filePath) return false;
+  const lower = filePath.toLowerCase();
+  const dot = lower.lastIndexOf('.');
+  if (dot === -1) return false;
+  return PROSE_EXTENSIONS.has(lower.slice(dot));
+}
+
+/**
+ * refuse_to_verify: ≥4 *code* editing events with ZERO verification
+ * events interleaved anywhere in the window. Prose edits (docs, notes)
+ * are excluded from the count — see `isProseEdit` for the rationale.
  */
 function detectRefuseToVerify(
   seq: ClassifiedEvent[]
 ): { edits: number } | null {
-  let edits = 0;
+  let codeEdits = 0;
   let verifies = 0;
   for (const c of seq) {
-    if (c.cls === 'editing') edits += 1;
-    else if (c.cls === 'verification') verifies += 1;
+    if (c.cls === 'editing') {
+      if (!isProseEdit(c.filePath)) codeEdits += 1;
+    } else if (c.cls === 'verification') verifies += 1;
   }
-  if (edits >= 4 && verifies === 0) return { edits };
+  if (codeEdits >= 4 && verifies === 0) return { edits: codeEdits };
   return null;
 }
 
@@ -343,6 +358,16 @@ export function analyzeSequences(events: TranscriptEvent[]): SequenceSignal {
   });
   const sorted = indexed.map((x) => x.ev);
 
+  // Link tool_result exit codes to their tool_use by id, so verification
+  // outcomes resolve on real transcripts (where the exit code lives on the
+  // separate tool_result). See `resolveVerificationOutcome`.
+  const resultByToolUseId = new Map<string, TranscriptEvent>();
+  for (const ev of sorted) {
+    if (ev.kind === 'tool_result' && ev.toolUseId) {
+      resultByToolUseId.set(ev.toolUseId, ev);
+    }
+  }
+
   // Classify each event; drop those that don't belong to our domain.
   const seq: ClassifiedEvent[] = [];
   for (const ev of sorted) {
@@ -353,7 +378,11 @@ export function analyzeSequences(events: TranscriptEvent[]): SequenceSignal {
     if (cls !== 'editing' && cls !== 'verification' && cls !== 'exploration') {
       continue;
     }
-    seq.push({ ev, cls, filePath: extractFilePath(ev) });
+    const entry: ClassifiedEvent = { ev, cls, filePath: extractFilePath(ev) };
+    if (cls === 'verification') {
+      entry.verifyPassed = resolveVerificationOutcome(ev, resultByToolUseId);
+    }
+    seq.push(entry);
   }
 
   if (seq.length === 0) {

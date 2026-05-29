@@ -17,6 +17,7 @@
       "expectedBucket": "stuck",
       "minConfidence": 0.6,
       "expectedDriftCount": 0,
+      "expectedSequence": "stuck_loop",
       "rationale": "Same file edited three times, npm test fails each time, user pushes back with 'still broken, try again'. Stuck_loop on src/auth/login.ts."
     },
     {
@@ -99,6 +100,25 @@
       "minConfidence": 0.6,
       "expectedDriftCount": 0,
       "rationale": "Antigravity TDD loop: exploring directory, editing types.ts, test fails with exit code 1, fixing types.ts, test passes successfully with exit code 0, human says 'perfect, thanks!'."
+    },
+    {
+      "file": "doc-edits-no-tests.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "expectedSequence": "none",
+      "rationale": "False-positive guard: 5 prose edits under docs/ (guide.md x3, intro.md, api.md), no test command. Editing a doc set legitimately has nothing to verify, so refuse_to_verify must NOT fire and the bucket must NOT flip to stuck. Lands on converging via Rule 4b (5 edits, docs cluster 100%, primary file edited 3x). Pre-fix this read as stuck."
+    },
+    {
+      "file": "ssh-keys-cwd.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Regression guard for the privileged-path detector with detectors ON. A normal fail→pass session whose cwd is /home/conal/.ssh-keys must NOT trip the .ssh rule — the segment regex anchors on .ssh followed by a separator or end, so .ssh-keys (hyphen) is correctly NOT a match. Zero drifts; converging on the green trend."
     }
   ]
 }

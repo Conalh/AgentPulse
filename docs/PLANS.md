@@ -8,7 +8,30 @@ Versions in the "Doing soon" lane aren't promises — they're the
 likely shape of the next ship. Versions in "Watching" are direction,
 not commitment.
 
-Last sweep: 2026-05-25 (post-v0.7.0).
+Last sweep: 2026-05-28 (post-v0.7.1, with the correctness + cleanup
+batch in flight on `main` toward the next release).
+
+---
+
+## Just shipped (v0.7.1 — session-noise + cross-runtime accuracy)
+
+Driven by real multi-terminal session sets. Fixes that lived only in the
+TUI never reached the headless `--once` / `--notify` paths, so JSON output
+diverged from the dashboard:
+
+- **Headless `--once` inherited the TUI's session hygiene** — subagent
+  filtering (`agent-<hex>`) and co-named-session disambiguation moved into
+  shared modules (`src/sessions/subagents.ts`, `src/labels.ts`) and now
+  feed both surfaces. New `label` field on the snapshot.
+- **Project names fixed on multi-word Claude Code projects** — naming now
+  prefers `basename(cwd)` (scanning past the metadata prelude) over the
+  lossy last-hyphen-segment slug decode.
+- **`exploring` narrative no longer contradicts its own signals** when the
+  low-confidence fallback fires with edits present.
+- **Current Codex desktop format** (`custom_tool_call`) recognized; added
+  `codex-desktop-*` golden fixtures.
+- Bumped `agent-gov-core` to `^1.2.1` (the v0.7.0 caret pointed at an
+  unpublished version and broke `npm ci`).
 
 ---
 
@@ -53,112 +76,60 @@ should consciously cover the multi-runtime cross-section.
 
 ---
 
-## Doing next (v0.7.1 — cleanup batch, deferred from v0.7.0)
+## In flight (Unreleased — correctness + cleanup batch)
 
-The five items from the post-v0.6.1 internal inspection. All small,
-all closeable in a single focused session. Deferred to v0.7.1 because
-the Antigravity integration correctness took priority.
+The cleanup batch from the post-v0.6.1 internal inspection. Originally
+pencilled in as v0.7.1, but v0.7.1 went to the session-noise/naming work
+instead (see above), so the batch slipped to the current Unreleased cycle.
+Most of it has now landed on `main`:
 
-### 1. `## [Unreleased]` header at the top of CHANGELOG.md
+- ✅ **`## [Unreleased]` header + convention note** in CHANGELOG.md,
+  cross-linked to the new `docs/RELEASING.md`. *(item 1)*
+- ✅ **`docs/RELEASING.md`** — substrate-first dual-publish order,
+  `npm publish --access=public`, `scripts/backfill-releases.mjs` usage,
+  and the action.yml version-lockstep (action ref reads its own
+  `package.json`). *(item 2)*
+- ✅ **`PulseOptions.events` marked `@internal`** — the orchestrator
+  fast-path is the only validated use; library consumers shouldn't rely
+  on it. *(item 5)*
+- ✅ **Hysteresis confidence-vs-bucket** — `orchestrator.ts` now clamps
+  confidence to `min(prior, raw)` when hysteresis overrides the bucket, so
+  the pill never shows a number computed for a bucket it isn't displaying.
+  *(item 4)*
+- ✅ **Verification vocabulary deduped** — the verification-command list +
+  pass/fail tables were three divergent copies across enrich / sequences /
+  trajectory; now a single `src/verification.ts`. Locking the corpus
+  `expectedSequence` field in surfaced a latent bug it also fixes:
+  `stuck_loop` never fired on real transcripts because Layer 2.5 read exit
+  codes off the `tool_use` instead of the linked `tool_result` (the same
+  gap Layer 3 closed in v0.6.1).
+- ◐ **Edge-case corpus fixtures + `expectedSequence` harness** *(item 3)* —
+  the harness now accepts `expectedSequence` (and `stuck.jsonl` asserts
+  `stuck_loop`); the `doc-edits-no-tests` and `ssh-keys-cwd` fixtures
+  landed (corpus is at 13 scenarios). **Still open:** the mixed-runtime
+  fixture (Cursor + Claude Code lines in one `.jsonl`).
+- ☐ **Audit the three duplication sites** *(item 6)* — still a deliberate
+  call, not yet made. The verification-vocab dedup above retired one *new*
+  duplication; the original three remain:
+  - `parseCache.ts` duplicating per-line dispatch from
+    `agent-gov-core/parsers`.
+  - `enqueueWrite` per-path write queue in `src/aliases.ts` and
+    `src/exceptions.ts` (~15 lines each, identical shape).
+  - "Skip exploration when looking for verification" in
+    `src/sequences.ts:findNextVerificationIdx`.
 
-CHANGELOG.md is 800+ lines now. The "Keep a Changelog" convention is
-to keep an empty `## [Unreleased]` section at the top that gets
-renamed to the version on release. Without it, the next contributor
-won't know where to put their entry.
-
-Drop it in, document the convention in a one-paragraph note at the
-top of the file (or in `docs/RELEASING.md` — see next item).
-
-### 2. `docs/RELEASING.md` for the dual-publish dance
-
-When AgentPulse depends on a not-yet-published `agent-gov-core@^X.Y.Z`
-caret, publish order matters and is currently documented in
-*CHANGELOG history* — not anywhere a future maintainer would think to
-look. Future-you (or anyone else) will lose 30 minutes the first time
-they forget.
-
-Contents:
-- The dual-publish order (substrate first, then consumer)
-- `npm publish --access=public` for scoped packages
-- `scripts/backfill-releases.mjs` usage + when to run it
-- GitHub Action ref bumping (action.yml comment + README example + examples/agentpulse-pr-check.yml)
-- The v0.5.5+ pattern: `action.yml` reads version from its own
-  `package.json` so the action ref and the npm version stay in
-  lockstep — no hardcoded version string
-
-### 3. Three edge-case corpus fixtures
-
-The current corpus (6 scenarios, one per bucket) is the *trivial*
-cross-section. To earn the "regression armor" label past sample size
-1, add the hard shapes:
-
-- **Mixed-runtime session** — Cursor lines + Claude Code lines in
-  the same `.jsonl`, ensures the line-router doesn't mistag.
-- **Doc-editing-no-tests** — multiple edits to `*.md` files, zero
-  test commands, should NOT classify as `refuse_to_verify` /
-  `stuck`. The right verdict is probably `converging` or `done`.
-- **SSH path in cwd** — session with `cwd === '/home/conal/.ssh-keys'`,
-  legitimately needs to write there. The privileged-path detector
-  should not fire just because `.ssh` appears in the path. Tests
-  the detector's substring-vs-segment-match precision.
-
-Plus harness work: the corpus test should accept an `expectedSequence`
-field (so `stuck.jsonl` can assert the `stuck_loop` sequence fires,
-not just the bucket).
-
-### 4. Fix hysteresis confidence-vs-bucket incongruity
-
-`src/orchestrator.ts` overrides `recap.verdict.bucket` when hysteresis
-holds back a transition, but leaves `verdict.confidence` from the raw
-(new-bucket) verdict. Users see `● converging (confidence 0.55)`
-where the 0.55 is the classifier's confidence in a *different*
-bucket.
-
-Two-line fix in `runPulse`: when overriding the bucket, also override
-confidence — either to the prior recap's value, or to a synthesized
-"held-back" sentinel (e.g. clamp to `min(prior, raw)` so we never
-overstate stability).
-
-### 5. Document `PulseOptions.events` more loudly
-
-The `events?: TranscriptEvent[]` field added in v0.6.0 is a powerful
-escape hatch — anyone calling `pulse({ events: [...] })` bypasses the
-parser entirely and trusts the caller's window-filtering.
-
-Currently used internally by the orchestrator. But it's an exported
-public option — a downstream library consumer could feed crafted
-events and produce any verdict. Add a loud JSDoc warning, OR mark the
-field `@internal` if we don't want library consumers using it. Lean
-toward `@internal` — the internal use case is the only validated one.
-
-### 6. Audit the three duplication sites
-
-Not a fix yet — a deliberate call. The first external inspection
-caught `parseCache.ts` duplicating per-line dispatch from
-`agent-gov-core/parsers`. There are at least two more:
-
-- `enqueueWrite` per-path write queue in `src/aliases.ts` and
-  `src/exceptions.ts` (~15 lines each, identical shape).
-- "Skip exploration when looking for verification" pattern in
-  `src/sequences.ts:findNextVerificationIdx`. Could be a substrate
-  primitive if any other tool needs the same lookahead semantics.
-
-The three options:
-1. Promote all three into `agent-gov-core@1.2.0` — one substrate
-   release retires three pieces of vendored code.
-2. Extract a shared `src/util/` helper inside AgentPulse, accept
-   that the substrate stays minimal.
-3. Leave as-is — duplication is tolerable below five sites.
-
-Decision criteria: does SessionTrail (or another suite consumer) want
-the same primitive? If yes → substrate. If no → local extract or
-leave. Worth a 30-min think-through before v0.7.
+  Options: (1) promote into the substrate — one release retires vendored
+  code; (2) extract a local `src/util/` helper; (3) leave as-is —
+  duplication is tolerable below five sites. Decision criterion: does
+  SessionTrail (or another suite consumer) want the same primitive? If
+  yes → substrate; if no → local extract or leave.
 
 ---
 
-## Doing soon (v0.6.x range)
+## Doing soon (post-v0.7.1)
 
-Things that are clearly the next layer, but not blocking v0.6.3.
+Things that are clearly the next layer, but not blocking the current
+release.
 
 ### Grow the corpus from real dogfooding surprises
 
@@ -170,8 +141,8 @@ budget. Every time a real session classifies unexpectedly:
 4. Watch CI fail
 5. Fix the classifier, watch CI pass
 
-Goal: 20 scenarios by v0.7. The growth rate matters more than the
-specific count.
+Goal: 20 scenarios by v0.8 (at 13 now, after the doc-edits + ssh-keys
+adds). The growth rate matters more than the specific count.
 
 Plus, as Antigravity session logs land, we plan to systematically grow the corpus to include the stuck/exploring/done/drifting variants of the Antigravity runtime, dogfooded natively in v0.8.0.
 
@@ -250,7 +221,8 @@ If it stays near zero, they're calibrated.
 
 ### Promote one or more duplications into agent-gov-core@1.2.0
 
-Per the v0.6.3 audit. The likely candidates:
+Per the duplication audit (item 6 in the Unreleased batch). The likely
+candidates:
 - `enqueueWrite` — clear substrate primitive (per-path async write
   queue), useful for any tool persisting per-session state.
 - Per-line transcript dispatch — already partially in substrate; the
@@ -367,8 +339,8 @@ one model judge another. That's the credibility story.
 
 ## Open inspection-derived items (longer arc)
 
-From the four-way external inspection round, things the immediate
-v0.6.3 batch doesn't cover but are worth tracking:
+From the four-way external inspection round, things the Unreleased
+cleanup batch doesn't cover but are worth tracking:
 
 - **The "agent-gov suite is ambitious surface" warning** — five repos
   with cross-version dependencies. The substrate split helps. Not
@@ -382,7 +354,7 @@ v0.6.3 batch doesn't cover but are worth tracking:
   precision tracking" under Doing soon.
 
 - **parseCache.ts substrate-dispatch duplication** — see "Audit the
-  three duplication sites" under Doing next.
+  three duplication sites" (item 6) in the Unreleased batch.
 
 - **Corpus sample size = 1** — see "Grow the corpus from real
   dogfooding surprises" under Doing soon. The framing "regression
@@ -392,16 +364,17 @@ v0.6.3 batch doesn't cover but are worth tracking:
 - **Hero SVG is a mockup, not a screenshot** — see "SVG hero re-shoot"
   under Doing soon.
 
-- **`scripts/backfill-releases.mjs` is undocumented** — folded into
-  the `docs/RELEASING.md` work in v0.6.3.
+- ✅ **`scripts/backfill-releases.mjs` is undocumented** — now covered by
+  `docs/RELEASING.md` (Unreleased batch).
 
-- **CHANGELOG has no Unreleased header** — folded into v0.6.3.
+- ✅ **CHANGELOG has no Unreleased header** — added in the Unreleased batch.
 
 ---
 
 ## How to use this doc
 
-When picking up after a break: scan **Doing next**, pick one, ship
+When picking up after a break: scan **In flight** for the open items in
+the current batch, or **Doing soon** for the next layer; pick one, ship
 it. Cross it off here in the same commit that lands the change.
 
 When something genuinely new comes up: drop it into **Doing soon** if

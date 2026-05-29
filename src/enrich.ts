@@ -18,6 +18,7 @@ import {
   canonicalToolName,
   extractFilePath as extractFilePathFromInput,
 } from './normalize.js';
+import { isVerificationCommand } from './verification.js';
 
 // ─────────────────────────────────────────────────────────────────────
 // Stopwords — small English list. Frequency-based topic extraction with
@@ -156,32 +157,6 @@ function pathClusterKey(filePath: string, cwd: string | undefined): string {
   return `${dirParts[0]}/${dirParts[1]}`;
 }
 
-// Bash command patterns that indicate verification (tests / lint / build / typecheck).
-// Matched against the leading portion of the command string.
-const VERIFICATION_PATTERNS: readonly RegExp[] = [
-  /\bnpm\s+test\b/,
-  /\bnpm\s+run\b/,
-  /\bnpx\s+(vitest|jest|mocha|playwright|tsc|eslint|prettier)\b/,
-  /\byarn\s+(test|run|build|lint)\b/,
-  /\bpnpm\s+(test|run|build|lint)\b/,
-  /\bpytest\b/,
-  /\bpython\s+-m\s+pytest\b/,
-  /\bunittest\b/,
-  /\bcargo\s+(test|build|check|clippy)\b/,
-  /\bgo\s+(test|build|vet)\b/,
-  /\bmake\b/,
-  /\bvitest\b/,
-  /\bjest\b/,
-  /\beslint\b/,
-  /\btsc\b/,
-  /\bmypy\b/,
-  /\bruff\b/,
-  /\bgradle\b/,
-  /\bmvn\b/,
-  /\brake\s+test\b/,
-  /\bphpunit\b/,
-];
-
 const NAVIGATION_PATTERNS: readonly RegExp[] = [
   /^\s*cd(\s|$)/,
   /^\s*ls(\s|$)/,
@@ -237,9 +212,7 @@ function classifyToolUse(event: TranscriptEvent): ActionClass {
       for (const re of EXTERNAL_BASH_PATTERNS) {
         if (re.test(cmd)) return 'external';
       }
-      for (const re of VERIFICATION_PATTERNS) {
-        if (re.test(cmd)) return 'verification';
-      }
+      if (isVerificationCommand(cmd)) return 'verification';
       for (const re of NAVIGATION_PATTERNS) {
         if (re.test(cmd)) return 'navigation';
       }

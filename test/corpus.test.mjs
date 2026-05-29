@@ -76,6 +76,13 @@ for (const scenario of MANIFEST.scenarios) {
           `${scenario.file}: expected ${scenario.expectedDriftCount} drift(s), got ${recap.verdict.drifts.length}`,
         );
       }
+      if (typeof scenario.expectedSequence === 'string') {
+        assert.equal(
+          recap.verdict.sequence?.pattern ?? 'none',
+          scenario.expectedSequence,
+          `${scenario.file}: expected sequence ${scenario.expectedSequence}, got ${recap.verdict.sequence?.pattern ?? 'none'}`,
+        );
+      }
     } finally {
       rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }

@@ -142,6 +142,37 @@ test('analyzeSequences: refuse_to_verify fires on ≥4 edits with 0 verification
   assert.ok(sig.confidence >= 0.6);
 });
 
+test('analyzeSequences: prose-only edits do NOT fire refuse_to_verify', () => {
+  // A docs-only session legitimately has no test command to run. Editing
+  // a pile of .md files with zero verifications is the expected shape, not
+  // a "writing code without testing" risk — so refuse_to_verify must stay
+  // silent. (Guards the same scenario as the doc-edits-no-tests corpus.)
+  const events = [
+    toolUse(FRESH + 1000, 'Edit', { file_path: 'docs/guide.md' }),
+    toolUse(FRESH + 2000, 'Edit', { file_path: 'docs/intro.md' }),
+    toolUse(FRESH + 3000, 'Edit', { file_path: 'README.md' }),
+    toolUse(FRESH + 4000, 'Edit', { file_path: 'notes.txt' }),
+    toolUse(FRESH + 5000, 'Edit', { file_path: 'docs/api.rst' }),
+  ];
+  const sig = analyzeSequences(events);
+  assert.notEqual(sig.pattern, 'refuse_to_verify');
+});
+
+test('analyzeSequences: code edits mixed with prose still fire refuse_to_verify at ≥4 code edits', () => {
+  // Prose edits don't count, but ≥4 genuine code edits with no verification
+  // still trip the signal even when docs edits are interleaved.
+  const events = [
+    toolUse(FRESH + 1000, 'Edit', { file_path: 'docs/guide.md' }),
+    toolUse(FRESH + 2000, 'Edit', { file_path: 'src/a.ts' }),
+    toolUse(FRESH + 3000, 'Edit', { file_path: 'src/b.ts' }),
+    toolUse(FRESH + 4000, 'Edit', { file_path: 'README.md' }),
+    toolUse(FRESH + 5000, 'Edit', { file_path: 'src/c.ts' }),
+    toolUse(FRESH + 6000, 'Edit', { file_path: 'src/d.ts' }),
+  ];
+  const sig = analyzeSequences(events);
+  assert.equal(sig.pattern, 'refuse_to_verify');
+});
+
 test('analyzeSequences: stuck_loop tolerates interleaved reads between edit and verify (v0.5.3)', () => {
   // Real agents do exploration BETWEEN iterations: edit a file, read 3
   // others to figure out what's wrong, then run tests. Pre-fix the
