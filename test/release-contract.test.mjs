@@ -36,4 +36,5 @@ test('release contract: hosted Action output redacts paths by default', () => {
   assert.match(redactInput, /reduce file paths/);
   assert.match(tokenInput, /default:\s*''/);
   assert.match(tokenInput, /Required when/);
+  assert.doesNotMatch(tokenInput, /\$\{\{/);
 });

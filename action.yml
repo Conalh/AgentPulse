@@ -111,8 +111,8 @@ inputs:
   github-token:
     description: >-
       GITHUB_TOKEN for the sticky PR comment. Required when
-      `comment-on-pr: true`; pass `${{ github.token }}` explicitly from the
-      calling workflow.
+      `comment-on-pr: true`; pass the calling workflow's GitHub token
+      explicitly.
     required: false
     default: ''
 

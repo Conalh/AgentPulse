@@ -26,7 +26,7 @@ An accuracy pass on the classifier and the drift detectors, driven by an externa
   `redact: none` for trusted private output or `redact: all` for stronger
   minimization.
 - Sticky PR comments now require the caller to pass `github-token` explicitly;
-  the prior metadata default used a context that GitHub rejects while loading a
+  the prior metadata embedded a context that GitHub rejects while loading a
   composite Action.
 - Public fixtures, screenshots, and examples use synthetic account and project
   names. CI now runs npm's production dependency audit on every supported
