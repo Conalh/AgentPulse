@@ -13,6 +13,20 @@ be cut from this section. See docs/RELEASING.md.
 
 No unreleased changes.
 
+## [0.8.2] — 2026-07-16
+
+### Fixed — live dashboard session freshness
+
+- The Windows polling fallback now applies the same `--stale` cutoff as initial
+  discovery, so old transcript archives no longer reappear as live sessions
+  after the first poll.
+- Watched sessions are removed as soon as their transcript activity crosses the
+  cutoff, even when no filesystem event occurs. A later transcript write adds
+  the session back normally.
+- Session rows now label and display transcript activity age rather than the
+  most recent analysis refresh, so an idle historical transcript can no longer
+  look freshly active merely because AgentPulse re-analyzed it.
+
 ## [0.8.1] — 2026-07-16
 
 An accuracy pass on the classifier and the drift detectors, driven by an external code review with executed repro probes. Two fixes stop healthy sessions from classifying as `stuck` (and failing a `--once --strict` gate); three close real-world bypasses in the drift rules. 14 new regression tests pin the fixed behaviours.

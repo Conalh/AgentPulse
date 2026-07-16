@@ -23,6 +23,7 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // (specific, action-oriented, no marketing). Edit here if any need a
 // different lede.
 const TITLES = {
+  '0.8.2': 'Accurate live-session freshness and stale-session eviction',
   '0.8.1': 'Classifier accuracy, Node 24 Action runtime, and safer hosted output',
   '0.4.3': "Narrative quality fixes (no more 'working on bad')",
   '0.4.4': 'Hex-tail disambiguator for same-label session rows',
