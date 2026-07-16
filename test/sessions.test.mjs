@@ -185,6 +185,67 @@ test('watcher emits add for a JSONL created after start()', async () => {
   }
 });
 
+test('watcher polling ignores transcripts older than staleMs', async () => {
+  const root = mkTmp();
+  // A missing root always starts in polling mode, making this regression
+  // portable beyond the Windows + Node 24 environment where it was observed.
+  const claudeRoot = join(root, 'later', '.claude', 'projects');
+  const watcher = createSessionWatcher({
+    discover: { roots: [claudeRoot], staleMs: 100 },
+    debounceMs: 20,
+    pollIntervalMs: 50,
+  });
+  const events = [];
+  watcher.on((event) => events.push(event));
+  try {
+    await watcher.start();
+    mkdirSync(claudeRoot, { recursive: true });
+    const transcript = join(claudeRoot, 'old.jsonl');
+    writeFileSync(transcript, JSON.stringify({ type: 'user' }) + '\n');
+    const old = (Date.now() - 60_000) / 1000;
+    utimesSync(transcript, old, old);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(events.some((event) => event.type === 'add'), false);
+    assert.deepEqual(watcher.snapshot(), []);
+  } finally {
+    await watcher.stop();
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('watcher removes sessions at staleMs and re-adds them after new activity', async () => {
+  const root = mkTmp();
+  const claudeRoot = join(root, 'later', '.claude', 'projects');
+  const watcher = createSessionWatcher({
+    discover: { roots: [claudeRoot], staleMs: 200 },
+    debounceMs: 20,
+    pollIntervalMs: 50,
+  });
+  const events = [];
+  watcher.on((event) => events.push(event));
+  try {
+    await watcher.start();
+    mkdirSync(claudeRoot, { recursive: true });
+    const transcript = join(claudeRoot, 'active.jsonl');
+    writeFileSync(transcript, JSON.stringify({ type: 'user' }) + '\n');
+
+    assert.equal(await waitFor(() => events.some((event) => event.type === 'add')), true);
+    assert.equal(await waitFor(() => events.some((event) => event.type === 'remove')), true);
+    assert.deepEqual(watcher.snapshot(), []);
+
+    const now = Date.now() / 1000;
+    utimesSync(transcript, now, now);
+    assert.equal(
+      await waitFor(() => events.filter((event) => event.type === 'add').length === 2),
+      true,
+    );
+  } finally {
+    await watcher.stop();
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test('watcher emits change when an existing JSONL is appended', async () => {
   const root = mkTmp();
   const claudeRoot = join(root, '.claude', 'projects', 'app');

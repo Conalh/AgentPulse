@@ -26,6 +26,7 @@ import type {
   SessionWatcher,
   WatcherOptions,
 } from '../types.js';
+import { DEFAULT_STALE_MS } from '../defaults.js';
 import {
   buildWalkLimits,
   defaultRoots,
@@ -39,6 +40,7 @@ import {
 
 const DEFAULT_DEBOUNCE_MS = 300;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 interface ResolvedRoot {
   path: string;
@@ -93,6 +95,7 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
   const debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const discoverOpts = opts.discover ?? {};
+  const staleMs = discoverOpts.staleMs ?? DEFAULT_STALE_MS;
   // Same depth/exclude bounds the one-shot discovery applies, so polling
   // mode doesn't re-walk an unbounded tree every interval.
   const walkLimits = buildWalkLimits(discoverOpts);
@@ -117,6 +120,7 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
 
   let running = false;
   let stopping = false;
+  let staleTimer: NodeJS.Timeout | undefined;
 
   function emit(event: SessionEvent): void {
     // Snapshot listeners to allow off() during dispatch.
@@ -128,6 +132,45 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
         // Listener errors are not the watcher's problem.
       }
     }
+  }
+
+  function isStale(lastModified: number, now = Date.now()): boolean {
+    return staleMs !== Infinity && lastModified < now - staleMs;
+  }
+
+  function forget(absPath: string, session: DiscoveredSession): void {
+    known.delete(absPath);
+    sizes.delete(absPath);
+    emit({ type: 'remove', sessionId: session.id });
+  }
+
+  /**
+   * Keep the watcher's known set inside the same moving stale window used by
+   * one-shot discovery. A deadline timer is required for recursive fs.watch
+   * roots, where no filesystem event arrives merely because a session aged.
+   */
+  function scheduleStaleExpiry(): void {
+    if (staleTimer) clearTimeout(staleTimer);
+    staleTimer = undefined;
+    if (stopping || staleMs === Infinity || known.size === 0) return;
+
+    let earliestExpiry = Infinity;
+    for (const session of known.values()) {
+      earliestExpiry = Math.min(earliestExpiry, session.lastModified + staleMs);
+    }
+    const delay = Math.max(
+      1,
+      Math.min(MAX_TIMEOUT_MS, earliestExpiry - Date.now() + 1),
+    );
+    staleTimer = setTimeout(() => {
+      staleTimer = undefined;
+      const now = Date.now();
+      for (const [absPath, session] of Array.from(known.entries())) {
+        if (isStale(session.lastModified, now)) forget(absPath, session);
+      }
+      scheduleStaleExpiry();
+    }, delay);
+    staleTimer.unref?.();
   }
 
   // v0.3.1: Windows filesystems are case-insensitive. `resolve()` preserves
@@ -170,9 +213,16 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
 
     if (!st) {
       if (had) {
-        known.delete(absPath);
-        sizes.delete(absPath);
-        emit({ type: 'remove', sessionId: had.id });
+        forget(absPath, had);
+        scheduleStaleExpiry();
+      }
+      return;
+    }
+
+    if (isStale(st.mtimeMs)) {
+      if (had) {
+        forget(absPath, had);
+        scheduleStaleExpiry();
       }
       return;
     }
@@ -202,6 +252,7 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
       known.set(absPath, session);
       sizes.set(absPath, st);
       emit({ type: 'add', session });
+      scheduleStaleExpiry();
       return;
     }
 
@@ -217,6 +268,7 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
       known.set(absPath, updated);
       sizes.set(absPath, st);
       emit({ type: 'change', session: updated });
+      scheduleStaleExpiry();
     }
   }
 
@@ -326,6 +378,7 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
       const st = await safeStat(s.transcriptPath);
       if (st) sizes.set(s.transcriptPath, st);
     }
+    scheduleStaleExpiry();
 
     for (const root of roots) {
       let exists = false;
@@ -363,6 +416,8 @@ export function createSessionWatcher(opts: WatcherOptions = {}): SessionWatcher 
     pollRoots.clear();
     for (const t of debounceTimers.values()) clearTimeout(t);
     debounceTimers.clear();
+    if (staleTimer) clearTimeout(staleTimer);
+    staleTimer = undefined;
   }
 
   return {
