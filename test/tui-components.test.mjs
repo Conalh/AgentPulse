@@ -98,6 +98,19 @@ test('SessionList renders all session names, runtimes, and bucket labels', () =>
   assert.match(frame, /⚠/); // drifting
 });
 
+test('SessionList shows transcript activity time instead of recap refresh time', () => {
+  const state = fixtureState({ id: 'a', projectName: 'MyApp', bucket: 'idle' });
+  state.session.lastModified = Date.now() - 10 * 60_000;
+  state.lastUpdated = Date.now() - 1_000;
+
+  const { lastFrame } = render(
+    createElement(SessionList, { states: [state], selectedId: 'a' })
+  );
+  const frame = lastFrame() ?? '';
+  assert.match(frame, /activity 10 min ago/);
+  assert.doesNotMatch(frame, /updated 1s ago/);
+});
+
 test('SessionList disambiguates rows that share project+runtime (v0.4.4)', () => {
   // Regression: real screenshot showed three rows of `core (claude-code)`
   // because the same project had three distinct sessions. Without

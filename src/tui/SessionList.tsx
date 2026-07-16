@@ -4,7 +4,7 @@
  * Stateless. The parent owns selection + state; we render what's given.
  *
  * v0.5.3: dropped the `now` prop and use the self-clocking `<TimeAgo>`
- * cell for the "updated Xs ago" column. The pane re-renders only when
+ * cell for the "activity Xs ago" column. The pane re-renders only when
  * its session set or selection changes, not on every wall-clock tick.
  * Combined with the `React.memo` wrap exported below, this lets the
  * App's 1 s clock drive a tight subtree (just the TimeAgo cells)
@@ -150,7 +150,7 @@ function SessionListInner({ states, selectedId }: SessionListProps): React.React
             : s.error
               ? 'error'
               : '—';
-        // v0.5.3: the "updated Xs ago" cell is rendered by `<TimeAgo>`
+        // v0.5.3: the activity-age cell is rendered by `<TimeAgo>`
         // below, which owns its own 1 s interval so the rest of the
         // pane doesn't re-render every wall-clock tick.
 
@@ -203,10 +203,10 @@ function SessionListInner({ states, selectedId }: SessionListProps): React.React
                 {bucketLabel}
               </Text>
             </Box>
-            {s.lastUpdated > 0 ? (
-              <TimeAgo timestamp={s.lastUpdated} prefix="updated " dim />
+            {s.session.lastModified > 0 ? (
+              <TimeAgo timestamp={s.session.lastModified} prefix="activity " dim />
             ) : (
-              <Text dimColor>no recap yet</Text>
+              <Text dimColor>activity unknown</Text>
             )}
           </Box>
         );
