@@ -1,0 +1,422 @@
+/**
+ * Session discovery — walk known runtime transcript roots and surface
+ * recent .jsonl files as DiscoveredSession objects.
+ *
+ * Pure node stdlib. See `src/types.ts` for the contract.
+ */
+
+import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, isAbsolute, join, resolve, sep } from 'node:path';
+
+import type {
+  DiscoverOptions,
+  DiscoveredSession,
+  Runtime,
+} from '../types.js';
+import { DEFAULT_STALE_MS } from '../defaults.js';
+
+interface Root {
+  /** Absolute path on disk. */
+  path: string;
+  /** Runtime label inferred from this root. */
+  runtime: Runtime;
+}
+
+/**
+ * Default platform-aware roots. Home-relative; missing dirs are tolerated by
+ * the walker (it just returns []).
+ */
+export function defaultRoots(): Root[] {
+  const home = homedir();
+  return [
+    { path: join(home, '.claude', 'projects'), runtime: 'claude-code' },
+    { path: join(home, '.cursor', 'projects'), runtime: 'cursor' },
+    { path: join(home, '.cursor', 'agent-transcripts'), runtime: 'cursor' },
+    { path: join(home, '.codex', 'sessions'), runtime: 'codex' },
+    { path: join(home, '.codex', 'projects'), runtime: 'codex' },
+    { path: join(home, '.gemini', 'antigravity', 'brain'), runtime: 'antigravity' },
+  ];
+}
+
+/**
+ * Infer a Runtime from an arbitrary path by looking for runtime-ish path
+ * segments. Falls back to 'unknown' if nothing matches — useful when the
+ * caller passes opts.roots that don't follow the default layout.
+ */
+export function inferRuntimeFromPath(p: string): Runtime {
+  const lower = p.toLowerCase().split(/[\\/]/);
+  if (lower.includes('.claude') || lower.some((s) => s === 'claude' || s === 'claude-code')) {
+    return 'claude-code';
+  }
+  if (lower.includes('.cursor') || lower.includes('cursor')) {
+    return 'cursor';
+  }
+  if (lower.includes('.codex') || lower.includes('codex')) {
+    return 'codex';
+  }
+  if (lower.includes('.gemini') || lower.includes('antigravity')) {
+    return 'antigravity';
+  }
+  return 'unknown';
+}
+
+/**
+ * Derive a friendly project name from a path. Claude Code uses slugs like
+ * `C--Users-demo-Dev-MyApp` for the project dir (originally `C:\Users\demo\Dev\MyApp`
+ * or `/Users/demo/Dev/MyApp`). We take the last meaningful segment after
+ * splitting on the slug separator.
+ *
+ * v0.2.1: if the decoded slug looks like a Windows drive prefix only
+ * (just "C", "D", etc.), we fall back to `basename(cwd)` when a cwd was
+ * extracted from the transcript. This is the difference between 30 sessions
+ * all labeled "C" and 30 sessions labeled with their actual project names.
+ */
+export function deriveProjectName(
+  transcriptPath: string,
+  rootPath: string,
+  cwd?: string
+): string | undefined {
+  const normTranscript = resolve(transcriptPath);
+  const normRoot = resolve(rootPath);
+
+  let slug: string | undefined;
+  if (!normTranscript.startsWith(normRoot + sep) && normTranscript !== normRoot) {
+    slug = basename(transcriptPath, '.jsonl');
+  } else {
+    const rel = normTranscript.slice(normRoot.length + 1);
+    const firstSeg = rel.split(/[\\/]/)[0];
+    if (firstSeg) {
+      slug = firstSeg.toLowerCase().endsWith('.jsonl')
+        ? basename(firstSeg, '.jsonl')
+        : firstSeg;
+    }
+  }
+
+  const decoded = slug ? decodeSlug(slug) : undefined;
+
+  // v0.7.1: cwd basename is authoritative when present. The slug encoder
+  // in Claude Code flattens directory separators to `-`, which is lossy
+  // for any project name that itself contains hyphens —
+  // `C--Workspace-example-learning-app` decodes via the
+  // last-hyphen-segment rule to `'app'`, and `C--Workspace-repo-orientation`
+  // decodes to `'orientation'`. The transcript's first line carries the real
+  // cwd (Claude Code session start, Codex session_meta.payload), so
+  // when we have it, basename(cwd) is the correct answer.
+  //
+  // Subagent-shaped basenames are excluded here — those are tooling
+  // artifacts. Single-letter basenames are also rejected (they're
+  // typically a Windows drive root like `cwd: 'C:\\'`); the existing
+  // junk fallback below handles them via the slug path.
+  if (cwd) {
+    const fromCwd = basename(cwd);
+    if (
+      fromCwd &&
+      !/^[a-z]$/i.test(fromCwd) &&
+      !/^agent-[0-9a-f]{8,}/i.test(fromCwd)
+    ) {
+      return fromCwd;
+    }
+  }
+
+  // Fallback: if the decoded slug is junk (empty, single letter that looks
+  // like a drive prefix, "C--"-shaped leftover, or — added in v0.4.6 — a
+  // date-shape segment from Codex's `~/.codex/sessions/<year>/<month>/<day>/`
+  // layout), prefer the cwd basename.
+  //
+  // Codex stores transcripts at `~/.codex/sessions/2026/05/23/rollout-xxx.jsonl`,
+  // which would otherwise surface as a project named "2026" in the dashboard
+  // (the year segment is the slug). None of these date-shape strings are ever
+  // real project names; treat them as junky and force the cwd fallback.
+  const looksJunky =
+    !decoded ||
+    /^[a-z]$/i.test(decoded) ||
+    /^[a-z]--+$/i.test(decoded) ||
+    /^-+$/.test(decoded) ||
+    /^\d{1,4}$/.test(decoded) ||              // year / month / day segment
+    /^\d{4}-\d{2}-\d{2}$/.test(decoded);      // ISO date
+
+  if (looksJunky && cwd) {
+    const fromCwd = basename(cwd);
+    if (fromCwd && !/^[a-z]$/i.test(fromCwd)) return fromCwd;
+  }
+
+  // Last resort when even cwd doesn't help: return the slug minus the drive
+  // prefix if it leaves something meaningful. v0.2.6: previously this fell
+  // back to the *original* slug when stripping emptied it out, which is how
+  // raw `C--` rows still surfaced in the dashboard. Now: when even the
+  // stripped slug is empty, return undefined so the UI falls through to
+  // its own `session-<id-prefix>` fallback rather than showing junk.
+  //
+  // v0.4.6: date-shape slugs (`2026`, `05`, `2026-05-23`) get the same
+  // undefined treatment — never want to render those as a "project name".
+  if (looksJunky && slug) {
+    const isDateShape =
+      /^\d{1,4}$/.test(slug) || /^\d{4}-\d{2}-\d{2}$/.test(slug);
+    if (isDateShape) return undefined;
+    const stripped = slug.replace(/^[a-z]--+/i, '');
+    return stripped.length > 0 ? stripped : undefined;
+  }
+
+  return decoded || undefined;
+}
+
+/**
+ * Convert a Claude Code-style slug back into something human-readable.
+ *   `C--Users-demo-Dev-MyApp` → `MyApp`
+ *   `c-Dev-MyApp` → `MyApp`
+ *   `-Users-demo-projects-cool-app` → `cool-app`
+ *   `repo` → `repo`
+ *
+ * v0.2.1: handles the `C--` Windows drive-letter prefix produced by Claude
+ * Code on Windows (the `C:\` root gets slug-encoded as `C--`).
+ */
+export function decodeSlug(slug: string): string {
+  if (!slug) return slug;
+  // Drop a leading dash if present (Unix slugs often start with one).
+  let s = slug.startsWith('-') ? slug.slice(1) : slug;
+  // Drop a `<letter>--` Windows-drive prefix if present.
+  s = s.replace(/^[a-z]--/i, '');
+  // Split on '-' and find the last meaningful segment.
+  const parts = s.split('-').filter(Boolean);
+  // v0.2.2: when the strip + split leaves nothing (slug was just "C--"
+  // with no remainder), return an empty string so callers know to fall
+  // back to cwd. Returning the original slug (the old behavior) shows
+  // raw "C--" in the dashboard.
+  if (parts.length === 0) return '';
+  const last = parts[parts.length - 1]!;
+  return last;
+}
+
+/**
+ * Read the first valid line of a JSONL file and try to extract a cwd field.
+ * Returns undefined on any failure — discovery should never throw because of
+ * a malformed transcript.
+ */
+export async function extractCwdFromFirstLine(filePath: string): Promise<string | undefined> {
+  // Open the file and read up to ~64 KB. We scan early lines to find cwd.
+  let handle: FileHandle | undefined;
+  try {
+    handle = await fs.open(filePath, 'r');
+    const buf = Buffer.alloc(64 * 1024);
+    const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+    if (bytesRead <= 0) return undefined;
+    const chunk = buf.slice(0, bytesRead).toString('utf8');
+    const lines = chunk.split(/\r?\n/).filter(Boolean);
+    if (lines.length === 0) return undefined;
+
+    // Check if it's an Antigravity log format
+    try {
+      const firstParsed = JSON.parse(lines[0]!) as Record<string, unknown>;
+      if (typeof firstParsed.step_index === 'number') {
+        for (const line of lines) {
+          const parsed = JSON.parse(line) as Record<string, any>;
+          if (parsed.tool_calls) {
+            for (const call of parsed.tool_calls) {
+              if (call.args) {
+                let args = call.args;
+                if (typeof args === 'string') {
+                  try { args = JSON.parse(args); } catch {}
+                }
+                if (typeof args === 'object' && args !== null) {
+                  const keys = ['Cwd', 'DirectoryPath', 'SearchPath'];
+                  for (const k of keys) {
+                    const v = args[k];
+                    if (typeof v === 'string') {
+                      let pathVal = v;
+                      if (pathVal.startsWith('"') && pathVal.endsWith('"')) {
+                        try { pathVal = JSON.parse(pathVal); } catch {}
+                      }
+                      return pathVal;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // v0.7.1: scan the first few lines, not just lines[0]. Claude Code
+    // transcripts open with `permission-mode` + `file-history-snapshot`
+    // before any line that carries `cwd` (the user/system messages have
+    // it). The previous "first line only" behaviour missed cwd on every
+    // recent Claude Code session, so the cwd-first project-naming path
+    // (added in v0.7.1) never fired for them and we fell back to the
+    // lossy slug decoder ("app" instead of "example-learning-app").
+    //
+    // Bounded by both line count and byte count so we don't pay for
+    // scanning huge transcripts when cwd is genuinely absent; cwd shows
+    // up well within the first 16 KB / 25 lines on every observed
+    // Claude Code, Codex, and Cursor transcript.
+    const MAX_LINES_TO_SCAN = 25;
+    for (let i = 0; i < Math.min(lines.length, MAX_LINES_TO_SCAN); i++) {
+      const line = lines[i]!.trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line) as unknown;
+        if (!parsed || typeof parsed !== 'object') continue;
+        const obj = parsed as Record<string, unknown>;
+        if (typeof obj.cwd === 'string' && obj.cwd.length > 0) return obj.cwd;
+        // Codex session_meta wraps cwd inside .payload
+        const payload = obj.payload;
+        if (payload && typeof payload === 'object') {
+          const inner = (payload as Record<string, unknown>).cwd;
+          if (typeof inner === 'string' && inner.length > 0) return inner;
+        }
+      } catch {
+        // Malformed line — skip and keep scanning.
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (handle) {
+      try {
+        await handle.close();
+      } catch {
+        // Ignore close errors.
+      }
+    }
+  }
+}
+
+/**
+ * Generate a stable short id from an absolute path.
+ */
+export function sessionIdFromPath(absPath: string): string {
+  return createHash('sha1').update(absPath).digest('hex').slice(0, 12);
+}
+
+/**
+ * Bounds for the transcript walk. `maxDepth` caps how far below a root we
+ * descend (root contents = depth 0; descending into a child dir makes its
+ * contents depth 1); `Infinity` = unbounded. `exclude` is a set of
+ * lowercased directory basenames never descended into. Both default to the
+ * unbounded/empty behaviour the walker had before they were added — see
+ * `DiscoverOptions.maxDepth` / `excludeDirs`.
+ */
+export interface WalkLimits {
+  maxDepth: number;
+  exclude: ReadonlySet<string>;
+}
+
+/** Build {@link WalkLimits} from the optional discovery knobs. Exported so the
+ *  watcher applies identical bounds to its own recursive scan. */
+export function buildWalkLimits(opts: {
+  maxDepth?: number;
+  excludeDirs?: string[];
+}): WalkLimits {
+  return {
+    maxDepth: opts.maxDepth ?? Infinity,
+    exclude: new Set((opts.excludeDirs ?? []).map((d) => d.toLowerCase())),
+  };
+}
+
+/**
+ * Recursively walk a directory and yield every .jsonl file. Tolerates
+ * missing dirs (returns []) and EACCES on subdirs (skips them).
+ *
+ * Bounded by {@link WalkLimits}: a `--roots` (or CI artifact dir) pointed at
+ * a broad tree no longer incurs an unbounded recursive descent — descent
+ * stops at `maxDepth` and prunes excluded directory names before recursing.
+ */
+async function walkJsonl(
+  dir: string,
+  limits: WalkLimits,
+  depth = 0
+): Promise<string[]> {
+  const out: string[] = [];
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const ent of entries) {
+    const full = join(dir, ent.name);
+    if (ent.isDirectory()) {
+      if (depth >= limits.maxDepth) continue; // depth bound
+      if (limits.exclude.has(ent.name.toLowerCase())) continue; // pruned dir
+      const nested = await walkJsonl(full, limits, depth + 1);
+      out.push(...nested);
+    } else if (ent.isFile() && ent.name.toLowerCase().endsWith('.jsonl')) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+/**
+ * Discover sessions across the supplied (or default) roots.
+ *
+ * The returned array is sorted by lastModified DESC.
+ */
+export async function discoverSessions(
+  opts: DiscoverOptions = {}
+): Promise<DiscoveredSession[]> {
+  const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
+  const cutoff = staleMs === Infinity ? -Infinity : Date.now() - staleMs;
+  const limits = buildWalkLimits(opts);
+
+  // Resolve roots. When `opts.roots` is supplied we use them verbatim and
+  // infer runtime from the path. When not supplied, we use the platform
+  // defaults with their pinned runtime labels.
+  const roots: Root[] = opts.roots
+    ? opts.roots.map((r) => {
+        const abs = isAbsolute(r) ? r : resolve(r);
+        return { path: abs, runtime: inferRuntimeFromPath(abs) };
+      })
+    : defaultRoots();
+
+  const seen = new Map<string, DiscoveredSession>();
+
+  for (const root of roots) {
+    let exists = true;
+    try {
+      const st = await fs.stat(root.path);
+      if (!st.isDirectory()) exists = false;
+    } catch {
+      exists = false;
+    }
+    if (!exists) continue;
+
+    const files = await walkJsonl(root.path, limits);
+    for (const file of files) {
+      let st;
+      try {
+        st = await fs.stat(file);
+      } catch {
+        continue;
+      }
+      if (!st.isFile()) continue;
+      const mtime = st.mtimeMs;
+      if (mtime < cutoff) continue;
+
+      const absPath = resolve(file);
+      if (seen.has(absPath)) continue;
+
+      // Extract cwd first so deriveProjectName can use it as a fallback when
+      // the path slug decodes to a junk single-letter (Windows drive only).
+      const cwd = await extractCwdFromFirstLine(absPath);
+      const projectName = deriveProjectName(absPath, root.path, cwd);
+
+      seen.set(absPath, {
+        id: sessionIdFromPath(absPath),
+        runtime: root.runtime,
+        transcriptPath: absPath,
+        projectName,
+        lastModified: mtime,
+        cwd,
+      });
+    }
+  }
+
+  const out = Array.from(seen.values());
+  out.sort((a, b) => b.lastModified - a.lastModified);
+  return out;
+}

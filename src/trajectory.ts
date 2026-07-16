@@ -1,0 +1,986 @@
+/**
+ * AgentPulse Layer 3 (outcome signal) + Layer 4 (trajectory classifier).
+ *
+ * Pure, deterministic, no I/O. Reads an EnrichedWindow and emits a
+ * five-bucket verdict + the structured signals that justify it.
+ *
+ * Layer 3 — readOutcomeSignal: looks at verification runs, the most recent
+ * user message, and the most recent assistant message to characterize "how
+ * are we feeling about this window".
+ *
+ * Layer 4 — classifyTrajectory: priority-ordered decision tree against
+ * Layer 2 + Layer 3 outputs, with a lightweight drift check up front.
+ */
+
+import type { Finding } from 'agent-gov-core';
+import {
+  fingerprintFinding,
+  getCommandHead,
+  tokenizeShell,
+  tokenizeShellDeep,
+} from 'agent-gov-core';
+import {
+  canonicalToolName,
+  extractFilePath as extractFilePathFromInput,
+} from './normalize.js';
+import { classifyResultText, isVerificationCommand } from './verification.js';
+import { driftKind } from './drift.js';
+import type {
+  EnrichedWindow,
+  OutcomeSignal,
+  SequenceSignal,
+  TrajectoryBucket,
+  TrajectoryOptions,
+  TrajectoryVerdict,
+  TranscriptEvent,
+  UserToneTrend,
+  VerificationTrend,
+} from './types.js';
+
+// ─────────────────────────────────────────────────────────────────────
+// Layer 3 — outcome signal
+// ─────────────────────────────────────────────────────────────────────
+
+const AFFIRMING_TOKENS = [
+  'thanks',
+  'thank you',
+  'perfect',
+  'that works',
+  'great',
+  'nice',
+  'done',
+];
+
+// v0.8.1: 'no' and 'still' moved from bare tokens to context-shaped
+// patterns. Bare-token matching made "no rush, take your time" and "is the
+// server still running?" read as the user correcting the agent. Now:
+//  - "no" counts only when it LEADS the message ("no, that's wrong") and
+//    isn't a benign idiom ("no worries", "no rush", "no problem").
+//  - "still" counts only when paired with a negative continuation
+//    ("still failing", "still doesn't work", "still broken").
+const CORRECTING_TOKENS = [
+  'wrong',
+  'again',
+  'not quite',
+];
+
+const CORRECTING_PATTERNS: RegExp[] = [
+  /^\s*no\b(?!\s+(?:worries|problem|rush|hurry|need|idea))/i,
+  // "still" + a negative within one word: "still failing", "still broken",
+  // "still does not work", "still seeing errors". "still running?" stays
+  // neutral — the follow-word isn't negative.
+  /\bstill\s+(?:[\w'’]+\s+)?(?:not\b|no\b|fail|break|broken|wrong|crash|error|doesn'?t|isn'?t|won'?t|can'?t)/i,
+];
+
+const QUESTION_LEAD = /^(why|how|what|when|where|can|could|would|should|is|are|do|does)\b/i;
+
+const COMPLETION_VERBS: RegExp[] = [
+  /\bdone\b/i,
+  /\bfixed\b/i,
+  /\bcompleted\b/i,
+  /\bshipped\b/i,
+  /\ball set\b/i,
+  /that should do it/i,
+  /that's it\b/i,
+  /you're set\b/i,
+  /\bready to\b/i,
+  /now you can\b/i,
+  /\bworking tree is clean\b/i,
+  /\btracked tree is clean\b/i,
+  /\bnothing to commit\b/i,
+];
+
+/**
+ * Decide whether a single Bash tool_use looks like a verification command.
+ * We tolerate either a populated `toolResultExitCode`, in which case the
+ * exit code wins, or a textual heuristic over the command/result.
+ */
+function isVerificationEvent(ev: TranscriptEvent): boolean {
+  if (ev.kind !== 'tool_use') return false;
+  // v0.6.2: accept Codex's `shell` in addition to Anthropic's `Bash`.
+  // Pre-fix, a Codex session running `npm test` via `shell` was
+  // ignored by the verification-trend computation — so even a clean
+  // TDD shape on Codex produced `no_data`, mirroring the v0.6.1
+  // tool_use vs tool_result bug at a different layer.
+  if (canonicalToolName(ev.toolName) !== 'Bash') return false;
+  const cmd = String((ev.toolInput && (ev.toolInput.command as unknown)) ?? '');
+  return isVerificationCommand(cmd);
+}
+
+/**
+ * Classify the outcome of a single verification event.
+ *  - exit code wins when present (0 = pass, nonzero = fail)
+ *  - otherwise fall back to textual patterns in the result body
+ *  - returns null when we can't tell — those events are skipped
+ */
+function verificationOutcome(ev: TranscriptEvent): 'pass' | 'fail' | null {
+  if (typeof ev.toolResultExitCode === 'number') {
+    return ev.toolResultExitCode === 0 ? 'pass' : 'fail';
+  }
+  return classifyResultText(ev.toolResultText);
+}
+
+function computeVerificationTrend(events: TranscriptEvent[]): VerificationTrend {
+  const sorted = [...events].sort((a, b) => a.timestamp - b.timestamp);
+
+  // v0.6.1: build a lookup of tool_result events by their toolUseId so we
+  // can find exit codes on real parsed transcripts. The parser emits
+  // tool_use and tool_result as SEPARATE TranscriptEvents; exit codes
+  // live on the tool_result. Pre-fix, computeVerificationTrend only
+  // looked at the tool_use event itself, so the synthetic test shape
+  // (exit code attached directly to the tool_use) worked, but every
+  // real Claude Code / Cursor / Codex transcript yielded `no_data` for
+  // the verification trend — silently. Caught by the v0.6.1 corpus.
+  const resultByToolUseId = new Map<string, TranscriptEvent>();
+  for (const ev of events) {
+    if (ev.kind === 'tool_result' && ev.toolUseId) {
+      resultByToolUseId.set(ev.toolUseId, ev);
+    }
+  }
+
+  const outcomes: ('pass' | 'fail')[] = [];
+  for (const ev of sorted) {
+    if (!isVerificationEvent(ev)) continue;
+    // First: synthetic shape (exit code on the tool_use itself).
+    // Fallback: real shape (exit code on the linked tool_result).
+    let o = verificationOutcome(ev);
+    if (o === null && ev.toolUseId) {
+      const linked = resultByToolUseId.get(ev.toolUseId);
+      if (linked) o = verificationOutcome(linked);
+    }
+    if (o) outcomes.push(o);
+  }
+  if (outcomes.length === 0) return 'no_data';
+  const first = outcomes[0]!;
+  const last = outcomes[outcomes.length - 1]!;
+  const anyFail = outcomes.includes('fail');
+  const anyPass = outcomes.includes('pass');
+  if (first === 'fail' && last === 'pass') return 'improving';
+  if (first === 'pass' && last === 'fail') return 'regressing';
+  if (anyPass && !anyFail) return 'flat_pass';
+  if (anyFail && !anyPass) return 'flat_fail';
+  // Mixed but neither monotonic — bias to the latest result.
+  return last === 'pass' ? 'flat_pass' : 'flat_fail';
+}
+
+function findMostRecent(
+  events: TranscriptEvent[],
+  kind: TranscriptEvent['kind']
+): TranscriptEvent | null {
+  let best: TranscriptEvent | null = null;
+  for (const ev of events) {
+    if (ev.kind !== kind) continue;
+    if (best === null || ev.timestamp > best.timestamp) best = ev;
+  }
+  return best;
+}
+
+function computeUserToneTrend(events: TranscriptEvent[]): UserToneTrend {
+  const latest = findMostRecent(events, 'user_message');
+  if (!latest) return 'idle';
+  const text = (latest.text ?? '').trim();
+  if (!text) return 'neutral';
+  const lower = text.toLowerCase();
+
+  // v0.8.1: question shape beats affirming. "are we done?" carries the
+  // affirming token 'done' but is a QUESTION about state, not praise —
+  // pre-fix it classified as affirming. A correcting question ("why is it
+  // still broken?") still classifies as correcting below, so the demotion
+  // only reroutes affirming-token questions.
+  const isQuestionShaped = text.endsWith('?') || QUESTION_LEAD.test(text);
+
+  // Affirming wins over correcting when explicit and not a question —
+  // "thanks, that works" is unambiguous even if it ends in a comma.
+  // Word-boundary anchored to keep "noted" from triggering on substrings.
+  if (
+    !isQuestionShaped &&
+    AFFIRMING_TOKENS.some((tok) => wordContains(lower, tok))
+  ) {
+    return 'affirming';
+  }
+
+  // Correcting: leading "no", negative "still …", sentence-start "but …",
+  // or any of the other negation cues.
+  if (
+    CORRECTING_TOKENS.some((tok) => wordContains(lower, tok)) ||
+    CORRECTING_PATTERNS.some((re) => re.test(text)) ||
+    /^but\b/i.test(text) ||
+    /[.!?]\s+but\b/i.test(text)
+  ) {
+    return 'correcting';
+  }
+
+  if (isQuestionShaped) return 'questioning';
+  return 'neutral';
+}
+
+/** Word-boundary contains. Treats spaces as boundaries on either side. */
+function wordContains(haystack: string, needle: string): boolean {
+  // Escape regex metacharacters in the token — none of ours contain any, but
+  // belt-and-braces in case the list grows.
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i');
+  return re.test(haystack);
+}
+
+function computeCompletionVerbsRecent(events: TranscriptEvent[]): boolean {
+  const latest = findMostRecent(events, 'assistant_message');
+  if (!latest) return false;
+  const text = latest.text ?? '';
+  if (!text) return false;
+  return COMPLETION_VERBS.some((re) => re.test(text));
+}
+
+function computeIdleGapMs(enriched: EnrichedWindow): number {
+  const latestUser = findMostRecent(enriched.events, 'user_message');
+  if (!latestUser) return enriched.windowEnd - enriched.windowStart;
+  return Math.max(0, enriched.windowEnd - latestUser.timestamp);
+}
+
+/** v0.8.1: gap since the most recent assistant message. See the
+ *  OutcomeSignal.completionGapMs doc for why this exists alongside
+ *  idleGapMs (user-message anchor vs sign-off anchor). */
+function computeCompletionGapMs(enriched: EnrichedWindow): number | undefined {
+  const latestAssistant = findMostRecent(enriched.events, 'assistant_message');
+  if (!latestAssistant) return undefined;
+  return Math.max(0, enriched.windowEnd - latestAssistant.timestamp);
+}
+
+export function readOutcomeSignal(enriched: EnrichedWindow): OutcomeSignal {
+  const signal: OutcomeSignal = {
+    verificationTrend: computeVerificationTrend(enriched.events),
+    userToneTrend: computeUserToneTrend(enriched.events),
+    completionVerbsRecent: computeCompletionVerbsRecent(enriched.events),
+    idleGapMs: computeIdleGapMs(enriched),
+  };
+  const completionGapMs = computeCompletionGapMs(enriched);
+  if (completionGapMs !== undefined) signal.completionGapMs = completionGapMs;
+  return signal;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Layer 4 — trajectory classifier
+// ─────────────────────────────────────────────────────────────────────
+
+const PRIVILEGED_PATH_RULES: { pattern: RegExp; slug: string; label: string }[] = [
+  { pattern: /(^|[\\/])\.ssh([\\/]|$)/, slug: 'ssh_path', label: '.ssh directory' },
+  { pattern: /(^|[\\/])\.aws([\\/]|$)/, slug: 'aws_path', label: '.aws directory' },
+  { pattern: /(^|[\\/])\.kube([\\/]|$)/, slug: 'kube_path', label: '.kube directory' },
+  { pattern: /^\/etc\/shadow(\/|$)/, slug: 'etc_shadow', label: '/etc/shadow' },
+  { pattern: /^\/private\/var(\/|$)/, slug: 'private_var', label: '/private/var' },
+];
+
+/**
+ * v0.8.1: find a privileged-path token inside a shell command string.
+ *
+ * `tokenizeShellDeep` (agent-gov-core) splits on top-level separators AND
+ * recursively extracts payloads nested in `bash -c "…"` / `$(…)` /
+ * backticks, so `bash -c "cat ~/.ssh/id_rsa"` is seen too. Within each
+ * subcommand we split on whitespace and test each PATH-SHAPED token (must
+ * contain a separator after quote-stripping) against the same
+ * PRIVILEGED_PATH_RULES the file-path branch uses. Requiring a separator
+ * keeps prose mentions from firing: `echo "back up .ssh first"` has no
+ * `/`-bearing token, while `cat ~/.ssh/id_rsa` does. `--flag=path` tokens
+ * are tested on the part after the last `=`.
+ *
+ * Returns the FIRST match — one finding per command line mirrors the
+ * one-finding-per-event shape of the file-path branch.
+ */
+function privilegedTokenInCommand(
+  cmd: string
+): { slug: string; label: string; token: string } | null {
+  for (const sub of tokenizeShellDeep(cmd)) {
+    for (const rawToken of sub.split(/\s+/)) {
+      let token = rawToken.replace(/^['"]+|['"]+$/g, '');
+      const eq = token.lastIndexOf('=');
+      if (eq >= 0) token = token.slice(eq + 1);
+      if (!/[\\/]/.test(token)) continue;
+      const normalized = token.replace(/\\/g, '/');
+      for (const rule of PRIVILEGED_PATH_RULES) {
+        if (rule.pattern.test(normalized)) {
+          return { slug: rule.slug, label: rule.label, token };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * v0.3.2: anchored regex form of the piped-fetch rule. Kept ONLY as the
+ * fallback for `isPipedFetchToShell` below (used when subcommand-span
+ * reconstruction fails); the primary detection is tokenizer-based as of
+ * v0.8.1.
+ *
+ * History: the anchor (command start or right after a `;`/`&`/`|`
+ * separator) was added because a `gh release create --notes "...curl ... |
+ * sh..."` tripped the rule — the regex scanned anywhere in the command
+ * string. The `[^'"]` exclusion that kept quoted args from matching ALSO
+ * meant any quoted argument between curl and the pipe defeated the rule:
+ * `curl -fsSL "https://get.docker.com" | sh` — the single most common
+ * install-script shape — was silently missed. That false negative is why
+ * the rule is now tokenizer-first.
+ */
+const SHELL_EXFIL_RE =
+  /(?:^|[;&|]\s*)(?:sudo\s+)?(curl|wget)\b[^\n|'"]*\|\s*(?:sudo\s+)?(sh|bash|zsh)\b/i;
+
+const FETCH_HEADS: ReadonlySet<string> = new Set(['curl', 'wget']);
+const SHELL_INTERPRETER_HEADS: ReadonlySet<string> = new Set(['sh', 'bash', 'zsh']);
+
+/**
+ * v0.8.1: tokenizer-based piped-fetch detection, replacing the regex as the
+ * primary path. `tokenizeShell` (agent-gov-core) is quote-aware: it splits a
+ * command into subcommands on top-level `;` `|` `&&` `||` while leaving
+ * quoted text intact. So:
+ *
+ *   - `curl -fsSL "https://get.docker.com" | sh` → ['curl -fsSL "…"', 'sh']
+ *     — caught (the old regex missed it: quoted URL between curl and pipe).
+ *   - `gh release create --notes "…curl … | sh…"` → one `gh` subcommand
+ *     — NOT flagged (the pipe is inside quotes; head is `gh`).
+ *
+ * `getCommandHead` resolves the executed verb through `sudo`/env-var
+ * wrappers and light obfuscation (`c""url`).
+ *
+ * tokenizeShell discards WHICH separator joined a pair, and `curl x && sh y`
+ * is deliberately out of scope for this rule family (documented in the
+ * README's drift-scope note). We recover the separator by locating each
+ * subcommand's span in the original string and inspecting the text between
+ * consecutive spans: exactly one `|` = a pipe. When span reconstruction
+ * fails (a subcommand isn't a verbatim slice), fall back to the regex.
+ */
+function isPipedFetchToShell(cmd: string): boolean {
+  const subs = tokenizeShell(cmd);
+  if (subs.length < 2) return false;
+
+  const spans: { start: number; end: number }[] = [];
+  let cursor = 0;
+  for (const sub of subs) {
+    const idx = cmd.indexOf(sub, cursor);
+    if (idx < 0) return SHELL_EXFIL_RE.test(cmd);
+    spans.push({ start: idx, end: idx + sub.length });
+    cursor = idx + sub.length;
+  }
+
+  for (let i = 0; i < subs.length - 1; i++) {
+    if (!FETCH_HEADS.has(getCommandHead(subs[i]!).toLowerCase())) continue;
+    if (!SHELL_INTERPRETER_HEADS.has(getCommandHead(subs[i + 1]!).toLowerCase())) {
+      continue;
+    }
+    const separator = cmd.slice(spans[i]!.end, spans[i + 1]!.start);
+    // Exactly one pipe — `||` (or-else) and `;`/`&&` chains don't count.
+    if (/^\s*\|\s*$/.test(separator)) return true;
+  }
+  return false;
+}
+
+/**
+ * Paths the spec treats as "outside the implicit repo root":
+ *   - /tmp/...
+ *   - /var/...
+ *   - ~/... (home-relative)
+ * We can't reliably know the cwd from the event alone, so we apply this rule
+ * to Write tool_use events targeting these prefixes. False positives are
+ * acceptable here — the v0.1 detector is meant to be a stand-in for the
+ * real gov-suite scan.
+ */
+const OUTSIDE_REPO_RE = /^(\/tmp\/|\/var\/|~\/)/;
+
+/**
+ * v0.3.1: when a repoRoot is provided, anything outside it counts as
+ * outside-repo (the whole point of repo-rooted gating). Normalizes Windows
+ * backslashes and drive-letter case so a write to `C:/Dev/Other/foo.py`
+ * from a session rooted at `c:\dev\sample-app` correctly flags as drift.
+ *
+ * v0.5.3: split into `normalizePath` + `isPathOutsideNormalizedRoot` so
+ * the repoRoot can be normalized once per `detectDrifts` invocation rather
+ * than re-normalized on every Write event in the window. Hot path on long
+ * windows with many Writes.
+ */
+function normalizePath(s: string): string {
+  return resolveDotSegments(
+    s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  );
+}
+
+/**
+ * v0.8.1: lexically resolve `.` and `..` segments. Pre-fix the outside-repo
+ * comparison was a raw `startsWith`, so `C:/dev/repo/../other/x.ts` (and a
+ * relative `../other/x.ts` resolved against cwd) passed as INSIDE the repo
+ * root — `..` traversal completely defeated the detector. Pure string
+ * manipulation, no filesystem: symlinks are out of scope (documented in the
+ * README's drift-scope note), but lexical traversal is the cheap 99% case.
+ *
+ * Expects forward slashes (callers normalize first). On an absolute path,
+ * `..` at the root is a no-op (`/..` → `/`); on a relative path, leading
+ * `..` segments are preserved (they resolve later against cwd, or fail the
+ * startsWith check — which correctly reads as outside).
+ */
+function resolveDotSegments(p: string): string {
+  if (!/(^|\/)\.\.?(\/|$)/.test(p)) return p; // fast path: no dot segments
+  const isAbs = /^([a-z]:)?\//.test(p);
+  const out: string[] = [];
+  for (const seg of p.split('/')) {
+    if (seg === '.') continue;
+    if (seg === '..') {
+      const top = out.length > 0 ? out[out.length - 1]! : undefined;
+      const atRoot =
+        top === undefined || top === '' || /^[a-z]:$/.test(top) || top === '..';
+      if (!atRoot) out.pop();
+      else if (!isAbs) out.push('..');
+      continue;
+    }
+    out.push(seg);
+  }
+  const joined = out.join('/');
+  // An absolute path must keep its root even if `..` consumed everything.
+  if (isAbs && (joined === '' || /^[a-z]:$/.test(joined))) {
+    return joined === '' ? '/' : joined + '/';
+  }
+  return joined;
+}
+
+/**
+ * v0.6.2: detect whether `filePath` is an absolute path (Unix `/...` or
+ * Windows `C:/...`) after backslash normalization. Used by the
+ * outside-repo check so relative paths get resolved against `cwd`
+ * before being compared against the repo root.
+ */
+function isAbsolutePath(filePath: string): boolean {
+  const f = filePath.replace(/\\/g, '/');
+  return /^([a-z]:)?\//i.test(f);
+}
+
+function isPathOutsideNormalizedRoot(
+  filePath: string,
+  normalizedRoot: string,
+  cwd?: string
+): boolean {
+  if (normalizedRoot.length === 0) return false;
+
+  // v0.8.1: `~`-prefixed paths are home-relative, not repo-relative. Pre-fix
+  // they fell through to the relative-path branch, got resolved as
+  // `<cwd>/~/secrets.txt`, and passed the startsWith check — so supplying a
+  // repoRoot actually REMOVED the home-dir coverage the legacy prefix rule
+  // (`OUTSIDE_REPO_RE`) provides when no root is set. A repo root is an
+  // absolute path, so a `~` write is outside it. (Known FP edge: a session
+  // whose cwd IS the home directory — rare enough to accept, and the
+  // exception baseline can suppress it.)
+  if (/^~([\\/]|$)/.test(filePath)) return true;
+
+  // v0.6.2: handle relative tool paths. Pre-fix, a Write to `src/foo.ts`
+  // was always flagged as outside-repo because the comparison did
+  // `normalizePath('src/foo.ts').startsWith('c:/dev/repo/')` — which is
+  // never true. Real transcripts emit relative paths constantly
+  // (Cursor especially); ~half of dogfooded Write events were getting
+  // false-flagged. Now: resolve relative paths against the event's
+  // `cwd` first; if there's no cwd, treat the path as safe (inside) —
+  // false negative on drift is strictly better than false positive
+  // on legitimate edits.
+  let toCheck = filePath;
+  if (!isAbsolutePath(filePath)) {
+    if (!cwd) return false; // no way to tell — defensively NOT outside
+    const cleanCwd = cwd.replace(/[\\/]+$/, '');
+    toCheck = `${cleanCwd}/${filePath}`;
+  }
+
+  const f = normalizePath(toCheck);
+  // Treat the root itself as "inside" — a Write to the project dir is fine.
+  if (f === normalizedRoot) return false;
+  return !f.startsWith(normalizedRoot + '/');
+}
+
+function buildDrift(
+  slug: string,
+  message: string,
+  ev: TranscriptEvent,
+  filePath?: string
+): Finding {
+  // The spec asks for kind `agent_pulse.live_drift_<slug>`. The shared
+  // schema's tool enum is closed (no `agent_pulse`), so we set `tool` to the
+  // closest fit (`session_trail` — live session drift) and carry the
+  // requested namespace verbatim in `kind`. Constructing the literal
+  // satisfies the `Finding` interface; the validator would reject the kind
+  // pattern, but that's a known v0.1 compromise.
+  const drift: Finding = {
+    tool: 'session_trail',
+    kind: driftKind(slug),
+    severity: 'high',
+    message,
+    data: {
+      timestamp: ev.timestamp,
+      toolName: ev.toolName ?? null,
+    },
+  };
+  if (filePath) drift.location = { file: filePath };
+  // v0.4.1: stamp a deterministic fingerprint so the exception baseline
+  // can match this finding by id across refreshes. agent-gov-core hashes
+  // (kind, file, line, column, salientKey) — same finding on the same site
+  // produces the same fingerprint, which is exactly what we want for
+  // dedupe-against-baseline semantics.
+  drift.fingerprint = fingerprintFinding(drift);
+  return drift;
+}
+
+function extractFilePath(ev: TranscriptEvent): string | undefined {
+  return extractFilePathFromInput(ev.toolInput);
+}
+
+function detectDrifts(
+  events: TranscriptEvent[],
+  repoRoot?: string,
+  exceptions?: Set<string>
+): {
+  drifts: Finding[];
+  signals: string[];
+} {
+  const drifts: Finding[] = [];
+  const signals: string[] = [];
+
+  // v0.5.3: normalize the repoRoot exactly once. Pre-fix, every Write event
+  // in the window paid the cost of `replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase()`
+  // on the same root string — wasted on long windows with many edits.
+  const normalizedRepoRoot = repoRoot ? normalizePath(repoRoot) : '';
+
+  // v0.4.1: helper that pairs a drift with its signal and applies the
+  // exception baseline. When a drift's fingerprint is in the user-approved
+  // set, BOTH the finding and its matching signal are dropped — otherwise
+  // the signal would still surface in `verdict.signals` and leak the
+  // suppressed concern back into the narrative.
+  function pushIfNotExcepted(drift: Finding, signal: string): void {
+    if (drift.fingerprint && exceptions?.has(drift.fingerprint)) return;
+    drifts.push(drift);
+    signals.push(signal);
+  }
+
+  for (const ev of events) {
+    if (ev.kind !== 'tool_use') continue;
+
+    // Privileged path check applies to any tool_use touching a file (Read,
+    // Edit, Write, Glob, …) — privilege is about the path, not the verb.
+    const filePath = extractFilePath(ev);
+    if (filePath) {
+      const normalized = filePath.replace(/\\/g, '/');
+      for (const rule of PRIVILEGED_PATH_RULES) {
+        if (rule.pattern.test(normalized)) {
+          pushIfNotExcepted(
+            buildDrift(
+              rule.slug,
+              `${ev.toolName ?? 'tool'} touched privileged path (${rule.label}): ${filePath}`,
+              ev,
+              filePath
+            ),
+            `privileged path: ${rule.label}`
+          );
+          break;
+        }
+      }
+    }
+
+    if (canonicalToolName(ev.toolName) === 'Bash') {
+      const cmd = String(
+        (ev.toolInput && (ev.toolInput.command as unknown)) ?? ''
+      );
+      // v0.8.1: tokenizer-based (quote-aware) — see isPipedFetchToShell.
+      if (cmd && isPipedFetchToShell(cmd)) {
+        pushIfNotExcepted(
+          buildDrift(
+            'shell_exfil',
+            `Bash piped network fetch into a shell: ${truncate(cmd, 120)}`,
+            ev
+          ),
+          'curl|wget piped to shell'
+        );
+      }
+      // v0.8.1: privileged paths referenced INSIDE shell commands. The
+      // privileged-path rule above only sees tools whose input carries a
+      // file path; `cat ~/.ssh/id_rsa` has no such input, so the single
+      // most likely way an agent actually touches `.ssh` was invisible —
+      // while the README claimed "any tool touching" these paths.
+      if (cmd) {
+        const priv = privilegedTokenInCommand(cmd);
+        if (priv) {
+          pushIfNotExcepted(
+            buildDrift(
+              priv.slug,
+              `Bash command referenced privileged path (${priv.label}): ${truncate(cmd, 120)}`,
+              ev,
+              priv.token
+            ),
+            `privileged path: ${priv.label}`
+          );
+        }
+      }
+    }
+
+    // v0.6.2: also accept Codex's `apply_patch` (which canonicalizes to
+    // `Edit`, not `Write`, but is the runtime's analogue for filesystem
+    // mutation). Pre-fix, Codex sessions writing outside the repo never
+    // tripped the detector.
+    const canonicalName = canonicalToolName(ev.toolName);
+    if ((canonicalName === 'Write' || canonicalName === 'Edit') && filePath) {
+      // v0.3.1: prefer repoRoot-relative comparison when available; fall back
+      // to the legacy hardcoded-prefix check for backwards compat with
+      // callers that don't pass a repo root yet.
+      // v0.5.3: use the pre-normalized root (computed once at the top of
+      // this function) instead of re-normalizing on every Write event.
+      // v0.6.2: pass the event's cwd so relative paths resolve correctly
+      // — without this, every `src/foo.ts` Write was flagged as outside-repo.
+      const normalized = filePath.replace(/\\/g, '/');
+      const outsideRepo = normalizedRepoRoot
+        ? isPathOutsideNormalizedRoot(filePath, normalizedRepoRoot, ev.cwd)
+        : OUTSIDE_REPO_RE.test(normalized);
+      if (outsideRepo) {
+        pushIfNotExcepted(
+          buildDrift(
+            'outside_repo_write',
+            `Write to path outside repo root: ${filePath}`,
+            ev,
+            filePath
+          ),
+          `write outside repo: ${filePath}`
+        );
+      }
+    }
+  }
+  return { drifts, signals };
+}
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n - 1) + '…';
+}
+
+function topClusterShare(
+  clusters: Record<string, number>
+): { share: number; top: string | null; total: number } {
+  let total = 0;
+  let topKey: string | null = null;
+  let topCount = 0;
+  for (const [k, v] of Object.entries(clusters)) {
+    total += v;
+    if (v > topCount) {
+      topCount = v;
+      topKey = k;
+    }
+  }
+  const share = total > 0 ? topCount / total : 0;
+  return { share, top: topKey, total };
+}
+
+function firstEditedFile(enriched: EnrichedWindow): string | null {
+  return enriched.primaryFiles[0] ?? null;
+}
+
+/**
+ * v0.3.2: count how many times a given file was edited in the window. Used
+ * by the tightened Rule 4b (converging without verification) — we want to
+ * see real focus on the primary file, not just "primary file exists".
+ */
+function countEditsTo(events: TranscriptEvent[], filePath: string): number {
+  if (!filePath) return 0;
+  const target = filePath.replace(/\\/g, '/');
+  let count = 0;
+  for (const ev of events) {
+    if (ev.kind !== 'tool_use') continue;
+    const toolName = canonicalToolName(ev.toolName);
+    if (toolName !== 'Edit' && toolName !== 'Write' && toolName !== 'NotebookEdit') continue;
+    const fp = extractFilePath(ev);
+    if (!fp) continue;
+    if (fp.replace(/\\/g, '/') === target) count += 1;
+  }
+  return count;
+}
+
+/**
+ * v0.2.6: how stale the most recent event can be before we flip the verdict
+ * to `idle`. 5 minutes is short enough that an actively-running agent always
+ * registers as active (refresh happens every 30s by default, so the window
+ * gets new events well before this threshold), and long enough that brief
+ * thinking pauses don't flicker the verdict between converging and idle.
+ */
+const IDLE_FRESHNESS_THRESHOLD_MS = 5 * 60 * 1000;
+
+/** Find the most recent event timestamp in the window. Returns 0 when the
+ *  window has no events. */
+function mostRecentEventMs(enriched: EnrichedWindow): number {
+  let max = 0;
+  for (const ev of enriched.events) {
+    if (typeof ev.timestamp === 'number' && ev.timestamp > max) {
+      max = ev.timestamp;
+    }
+  }
+  return max;
+}
+
+export function classifyTrajectory(
+  enriched: EnrichedWindow,
+  outcome: OutcomeSignal,
+  opts?: TrajectoryOptions
+): TrajectoryVerdict {
+  const editing = enriched.actionCounts.editing ?? 0;
+  const exploration = enriched.actionCounts.exploration ?? 0;
+  const cluster = topClusterShare(enriched.pathClusters);
+  // v0.3.2: Layer 2.5 sequence signal. When supplied, it influences a few
+  // specific rules below — stuck_loop overrides Rule 3 stuck, tdd_loop
+  // bumps converging confidence, refuse_to_verify flips bucket on heavy
+  // editing, exploratory_edit adds a supporting signal. The signal also
+  // rides on the verdict so the narrative renderer can append a phrase.
+  const sequence = opts?.sequence;
+
+  // 1. Drifting — first priority. Detectors are on by default. Drift findings
+  //    are worth surfacing even if the agent has technically gone quiet.
+  // v0.4.1: optional exceptions set filters out user-approved fingerprints
+  // BEFORE the bucket-rule check, so an exempted finding doesn't flip the
+  // verdict to `drifting` on its own.
+  if (opts?.detectorsEnabled !== false) {
+    const { drifts, signals } = detectDrifts(
+      enriched.events,
+      opts?.repoRoot,
+      opts?.exceptions
+    );
+    if (drifts.length > 0) {
+      return makeVerdict('drifting', 0.9, uniq(signals).slice(0, 4), drifts, sequence);
+    }
+  }
+
+  // 2. Idle — the most recent event is more than 5 minutes old AND no
+  //    completion verb was emitted.
+  //
+  //    v0.2.7 widened: previously this required `toolInvocationCount > 0`,
+  //    so a totally-silent window fell through to the "no decisive signal"
+  //    exploring fallback. That was backwards — an empty window is the
+  //    CLEAREST case of idle, not the most ambiguous. Now fires for both:
+  //      - empty windows (no events at all → freshness is Infinity)
+  //      - stale windows (had activity earlier, none in last 5 min)
+  //
+  //    Confidence is higher for empty windows (we KNOW nothing's happening)
+  //    than for the had-activity-then-stopped case (could be a brief pause).
+  //
+  //    If a completion verb WAS emitted, fall through to rule 3 (`done`)
+  //    which is the more specific "the agent signed off" state.
+  const lastEventMs = mostRecentEventMs(enriched);
+  const freshnessMs = lastEventMs > 0 ? enriched.windowEnd - lastEventMs : Infinity;
+  if (freshnessMs > IDLE_FRESHNESS_THRESHOLD_MS && !outcome.completionVerbsRecent) {
+    const signals: string[] = [];
+    const isEmpty = enriched.toolInvocationCount === 0 && enriched.userMessageCount === 0;
+    if (isEmpty) {
+      signals.push('no events in the window at all');
+    } else {
+      signals.push(`last activity ${formatMs(freshnessMs)} ago`);
+      if (enriched.toolInvocationCount > 0) {
+        signals.push(
+          `${enriched.toolInvocationCount} tool invocation${enriched.toolInvocationCount === 1 ? '' : 's'} earlier in the window`
+        );
+      }
+      if (editing > 0) {
+        signals.push(`${editing} edit${editing === 1 ? '' : 's'} before going quiet`);
+      }
+      if (cluster.top && cluster.share >= 0.5) {
+        signals.push(`focus was on ${cluster.top}`);
+      }
+    }
+    // Higher confidence on truly-empty windows — we have unambiguous data.
+    return makeVerdict('idle', isEmpty ? 0.85 : 0.75, signals.slice(0, 4), [], sequence);
+  }
+
+  // 2.5. stuck_loop sequence (Layer 2.5) — fires BEFORE Rule 3 Done because
+  // a tight loop on the same file with failing tests is the strongest stuck
+  // signal we have, regardless of whether the agent emitted a completion
+  // verb. Confidence 0.85; signals prepended so the loop is the headline.
+  if (sequence?.pattern === 'stuck_loop' && (sequence.cycleCount ?? 0) >= 2) {
+    const signals: string[] = [
+      `stuck on ${sequence.primaryFile ?? 'the same file'} (${sequence.cycleCount} failing cycles)`,
+      ...sequence.details,
+    ];
+    if (editing > 0) signals.push(`${editing} total edits in window`);
+    return makeVerdict('stuck', 0.85, signals.slice(0, 4), [], sequence);
+  }
+
+  // 3. Done — completion verb + idle gap + not actively being corrected.
+  if (
+    outcome.completionVerbsRecent &&
+    outcome.idleGapMs > 60_000 &&
+    outcome.userToneTrend !== 'correcting'
+  ) {
+    // v0.8.1: honest wording — idleGapMs is anchored on the last USER
+    // message, so describe it as "no user follow-up", not "idle after the
+    // sign-off" (the sign-off may have just happened; that gap is
+    // completionGapMs and the narrative renderer uses it).
+    const signals: string[] = [
+      `assistant emitted completion verb in last reply`,
+      `no user follow-up for ${formatMs(outcome.idleGapMs)}`,
+    ];
+    if (outcome.verificationTrend === 'flat_pass') {
+      signals.push('verifications all passing');
+    } else if (outcome.verificationTrend === 'improving') {
+      signals.push('tests recovered to green');
+    }
+    return makeVerdict('done', 0.85, signals.slice(0, 4), [], sequence);
+  }
+
+  // 3. Stuck — heavy editing + verifications not improving + user pushing back.
+  const stuckHardSignal =
+    editing >= 3 &&
+    outcome.verificationTrend === 'flat_fail' &&
+    outcome.userToneTrend === 'correcting';
+  const stuckSoftSignal =
+    editing >= 5 &&
+    (outcome.verificationTrend === 'flat_fail' ||
+      outcome.verificationTrend === 'regressing');
+  // v0.3.2: refuse_to_verify + editing ≥ 5 also flips to stuck even
+  // without a flat_fail signal. The whole point: we have no verification
+  // data because the agent never ran any.
+  const refuseToVerifyStuck =
+    sequence?.pattern === 'refuse_to_verify' && editing >= 5;
+  if (stuckHardSignal || stuckSoftSignal || refuseToVerifyStuck) {
+    const target = firstEditedFile(enriched);
+    const signals: string[] = [];
+    if (refuseToVerifyStuck) {
+      // v0.4.3: don't spread sequence.details here — the refuse_to_verify
+      // sequence's only detail is "${edits} edits with no verification
+      // events in the window", which restates the line we just pushed. Two
+      // bullets saying the same thing read as a stutter in the TUI.
+      signals.push(
+        `${editing} edits with no verification — agent isn't running anything`
+      );
+    } else {
+      signals.push(`${editing} edits${target ? ` (top file: ${target})` : ''}`);
+      signals.push(
+        outcome.verificationTrend === 'regressing'
+          ? 'tests went from passing to failing'
+          : 'tests still failing'
+      );
+      if (outcome.userToneTrend === 'correcting') {
+        signals.push('user is correcting the agent');
+      }
+    }
+    const confidence = stuckHardSignal ? 0.8 : refuseToVerifyStuck ? 0.75 : 0.7;
+    return makeVerdict('stuck', confidence, signals.slice(0, 4), [], sequence);
+  }
+
+  // 4. Converging — editing happening, tests recovering, focus narrowing.
+  if (
+    editing >= 1 &&
+    outcome.verificationTrend === 'improving' &&
+    cluster.share >= 0.6 &&
+    cluster.top
+  ) {
+    const pct = Math.round(cluster.share * 100);
+    const signals: string[] = [
+      `${editing} edit${editing === 1 ? '' : 's'} in window`,
+      'tests went from failing to passing',
+      `top cluster ${cluster.top} covers ${pct}% of activity`,
+    ];
+    // v0.3.2: tdd_loop (≥3 cycles) on top of a converging shape bumps
+    // confidence to 0.9 — the explicit iteration loop is a stronger
+    // signal than just "edits + improving tests".
+    let confidence = 0.85;
+    if (sequence?.pattern === 'tdd_loop' && (sequence.cycleCount ?? 0) >= 3) {
+      confidence = 0.9;
+      signals.unshift(
+        `tight TDD loop (${sequence.cycleCount} edit→verify cycles)`
+      );
+    }
+    // v0.3.2: exploratory_edit adds a supporting signal when both fire.
+    if (sequence?.pattern === 'exploratory_edit') {
+      signals.push(
+        `explored ${sequence.details[0] ?? 'the area'} before editing`
+      );
+    }
+    return makeVerdict('converging', confidence, signals.slice(0, 4), [], sequence);
+  }
+
+  // 4b. Converging (no verification signal) — v0.2.2 → v0.3.2.
+  //
+  // Original v0.2.2 rule fired on `editing >= 5 + (cluster >= 50% OR
+  // primaryFile)`. Gemini's review called this out as too aggressive: an
+  // agent thrashing one file (5+ edits, primaryFile set) would fire even
+  // without focused intent. v0.3.2 tightens to: editing >= 5 AND cluster
+  // share >= 70% AND primary file edited at least 3 times. That's
+  // "productive editing on a focused area," not "lots of unfocused edits
+  // somewhere."
+  //
+  // Confidence stays at 0.6 because verification signal is still absent —
+  // we're inferring intent from shape, not outcome.
+  const primaryFileEditCount = enriched.primaryFiles[0]
+    ? countEditsTo(enriched.events, enriched.primaryFiles[0])
+    : 0;
+  if (
+    editing >= 5 &&
+    cluster.share >= 0.7 &&
+    cluster.top &&
+    primaryFileEditCount >= 3
+  ) {
+    const pct = Math.round(cluster.share * 100);
+    const signals: string[] = [
+      `${editing} edits in window`,
+      `top cluster ${cluster.top} covers ${pct}% of activity`,
+      `primary file ${enriched.primaryFiles[0]} edited ${primaryFileEditCount} times`,
+      'no verification data — confidence reflects that',
+    ];
+    return makeVerdict('converging', 0.6, signals.slice(0, 4), [], sequence);
+  }
+
+  // 5. Exploring — no edits, lots of reads/searches.
+  if (editing === 0 && exploration >= 3) {
+    const signals: string[] = [
+      `${exploration} exploration actions`,
+      'no edits yet',
+    ];
+    if (cluster.top) {
+      const pct = Math.round(cluster.share * 100);
+      signals.push(`browsing ${cluster.top} (${pct}% of tool calls)`);
+    }
+    if (outcome.userToneTrend === 'questioning') {
+      signals.push('user asked a question');
+    }
+    return makeVerdict('exploring', 0.7, signals.slice(0, 4), [], sequence);
+  }
+
+  // 6. Fallback — low-confidence exploring with a transparent "we don't know"
+  // signal so the renderer can hedge.
+  const fallbackSignals: string[] = [
+    `${exploration} exploration / ${editing} editing actions`,
+    `verifications: ${outcome.verificationTrend}`,
+    `user tone: ${outcome.userToneTrend}`,
+    'no decisive signal — defaulting to exploring',
+  ];
+  return makeVerdict('exploring', 0.3, fallbackSignals.slice(0, 4), [], sequence);
+}
+
+function makeVerdict(
+  bucket: TrajectoryBucket,
+  confidence: number,
+  signals: string[],
+  drifts: Finding[],
+  sequence?: SequenceSignal
+): TrajectoryVerdict {
+  const v: TrajectoryVerdict = { bucket, confidence, signals, drifts };
+  // Only attach when there's a meaningful pattern. `none` is omitted so
+  // downstream consumers don't have to special-case it.
+  if (sequence && sequence.pattern !== 'none') {
+    v.sequence = sequence;
+  }
+  return v;
+}
+
+function uniq(arr: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of arr) {
+    if (!seen.has(s)) {
+      seen.add(s);
+      out.push(s);
+    }
+  }
+  return out;
+}
+
+function formatMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  return `${h}h`;
+}

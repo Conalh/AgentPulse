@@ -1,0 +1,458 @@
+/**
+ * AgentPulse interface contracts.
+ *
+ * These types are the synthesis surface between the five layers. Each layer
+ * consumes the previous layer's output and produces the next layer's input.
+ * Keep this file stable across parallel development — drift here breaks
+ * everyone else.
+ *
+ * Layer 1 → TranscriptEvent[]              (parser, in src/parser.ts)
+ * Layer 2 → EnrichedWindow                  (enrichment, in src/enrich.ts)
+ * Layer 3 → OutcomeSignal                   (outcome read, in src/trajectory.ts)
+ * Layer 4 → TrajectoryVerdict               (verdict classifier, in src/trajectory.ts)
+ * Layer 5 → PulseRecap                      (narrative + CLI, in src/narrative.ts + src/cli.ts)
+ */
+
+import type { Finding, EventKind, TranscriptEvent as CoreTranscriptEvent } from 'agent-gov-core';
+
+export type { EventKind };
+export type Runtime = 'claude-code' | 'cursor' | 'codex' | 'antigravity' | 'unknown';
+
+export interface TranscriptEvent extends Omit<CoreTranscriptEvent, 'runtime'> {
+  runtime: Runtime;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Layer 2 — Enrichment output
+// ─────────────────────────────────────────────────────────────────────
+
+export type ActionClass =
+  | 'exploration'      // Read, Glob, Grep, LS
+  | 'editing'          // Write, Edit, NotebookEdit
+  | 'verification'     // Bash running tests/lint/build
+  | 'external'         // WebFetch, WebSearch, curl, fetch, MCP calls
+  | 'navigation'       // cd, ls, pwd, git status/log/diff
+  | 'other';           // anything that doesn't classify cleanly
+
+export interface EnrichedWindow {
+  /** Events kept in the window (after timestamp filtering). */
+  events: TranscriptEvent[];
+  /** Window boundaries in epoch ms. */
+  windowStart: number;
+  windowEnd: number;
+  /** Duration of the window in ms (windowEnd - windowStart). */
+  durationMs: number;
+  /** Top-N keywords extracted from user prose in this window. */
+  topics: string[];
+  /** Directory-token clusters with invocation counts. e.g. {'src/auth': 4, 'tests': 2} */
+  pathClusters: Record<string, number>;
+  /** Action class counts. */
+  actionCounts: Record<ActionClass, number>;
+  /** Top-N files by edit count (Write/Edit invocations targeting them). */
+  primaryFiles: string[];
+  /** Top-N shell command "verbs" (e.g. ['npm test', 'git status']). */
+  commandVerbs: string[];
+  /** Unique tool names invoked in the window. */
+  uniqueTools: string[];
+  /** Count of total tool invocations. */
+  toolInvocationCount: number;
+  /** Count of user messages in the window. */
+  userMessageCount: number;
+  /** Runtime breakdown (multi-runtime transcripts get split). */
+  runtimeUsage: Partial<Record<Runtime, number>>;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Layer 3 — Outcome signal
+// ─────────────────────────────────────────────────────────────────────
+
+export type UserToneTrend =
+  | 'affirming'      // tokens like 'thanks', 'perfect', 'that works'
+  | 'correcting'     // 'no', 'wrong', 'still', 'again', 'not quite'
+  | 'questioning'    // user asked a question in their most recent message
+  | 'idle'           // no user message in the window
+  | 'neutral';       // user message present, no strong signal
+
+export type VerificationTrend =
+  | 'improving'   // tests/lints went from fail → pass during window
+  | 'regressing'  // tests/lints went from pass → fail
+  | 'flat_pass'   // multiple passes, no failures
+  | 'flat_fail'   // multiple fails, no recovery
+  | 'no_data';    // no verification commands ran
+
+export interface OutcomeSignal {
+  verificationTrend: VerificationTrend;
+  userToneTrend: UserToneTrend;
+  /** Whether the agent's most recent assistant message contained completion
+   *  verbs ('done', 'fixed', 'completed', 'all set'). */
+  completionVerbsRecent: boolean;
+  /** Time since the last user message at windowEnd, in ms. Used for done/idle. */
+  idleGapMs: number;
+  /** v0.8.1: time since the most recent ASSISTANT message at windowEnd, in
+   *  ms. The honest anchor for the done-narrative's "finished up about X
+   *  ago" — `idleGapMs` is measured from the last USER message, which can
+   *  be far older than the actual sign-off (user asks at T, agent works 15
+   *  minutes, says "done" at T+15m → idleGapMs reads 15m the moment the
+   *  verb lands). Undefined when no assistant message is in the window. */
+  completionGapMs?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Layer 4 — Trajectory verdict
+// ─────────────────────────────────────────────────────────────────────
+
+export type TrajectoryBucket =
+  | 'converging'   // narrowing focus, editing, verifications improving
+  | 'exploring'    // wide reads, usually no edits yet, no clear direction
+  | 'stuck'        // many edits, verifications not improving, user re-asking
+  | 'done'         // completion signal + idle gap
+  | 'drifting'     // gov-suite detectors firing in the live window
+  | 'idle';        // window has historical activity but nothing fresh — agent
+                   // is parked (waiting on the human, on review, on external
+                   // input). v0.2.6 addition: distinguishes "still actively
+                   // working" from "did 15 edits 18 minutes ago and stopped".
+
+export interface TrajectoryVerdict {
+  bucket: TrajectoryBucket;
+  /** Confidence in [0,1]. Below 0.5 → the renderer should hedge ('looks like'). */
+  confidence: number;
+  /** Human-readable signals that produced this verdict (for transparency). */
+  signals: string[];
+  /** When bucket === 'drifting', the gov-suite findings that fired during
+   *  the window. Empty otherwise. */
+  drifts: Finding[];
+  /** v0.3.2: ordered action-sequence pattern that fired during the window,
+   *  if any. The narrative renderer uses this to append a pattern-specific
+   *  sentence (TDD loop, refuse-to-verify, stuck loop, exploratory edit).
+   *  Undefined when no pattern fired or sequence analysis was skipped. */
+  sequence?: SequenceSignal;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Layer 2.5 — Ordered action-sequence signal (v0.3.2)
+//
+// Layer 2 produces unordered counts. Layer 2.5 looks at the chronological
+// shape of those events: did editing → verification cycle (TDD)? Did the
+// agent edit without ever verifying (refuse_to_verify)? Did edits target
+// the same file with failing tests in a loop (stuck_loop)? This signal
+// feeds Layer 4 (trajectory classifier) as an additional input.
+// ─────────────────────────────────────────────────────────────────────
+
+export type SequencePattern =
+  | 'tdd_loop'
+  | 'exploratory_edit'
+  | 'refuse_to_verify'
+  | 'stuck_loop'
+  | 'none';
+
+export interface SequenceSignal {
+  pattern: SequencePattern;
+  /** Confidence in [0,1]. Higher = more cycles / clearer shape. */
+  confidence: number;
+  /** Number of detected (editing → verification) or (exploration → editing)
+   *  cycles, where applicable. Undefined for `none` and `refuse_to_verify`. */
+  cycleCount?: number;
+  /** For `stuck_loop`: the file path being edited in every cycle. */
+  primaryFile?: string;
+  /** Human-readable details about why this pattern fired. */
+  details: string[];
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Layer 5 — CLI / output
+// ─────────────────────────────────────────────────────────────────────
+
+export interface PulseRecap {
+  windowStart: number;
+  windowEnd: number;
+  /** Human duration string e.g. '18 minutes', '4 minutes 12 seconds'. */
+  durationHuman: string;
+  verdict: TrajectoryVerdict;
+  /** The rendered plain-English narrative. */
+  narrative: string;
+  /** Full enrichment payload, for --format json consumers. */
+  enriched: EnrichedWindow;
+  /** Outcome signal, for --format json consumers. */
+  outcome: OutcomeSignal;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Cross-cutting
+//
+// v0.5.0: `ParseOptions` moved to agent-gov-core@1.1.0 alongside the
+// parser surface and is re-exported from there. Same fields, same
+// semantics — the TUI still passes `silent: true` to keep parser warnings
+// off the screen during refresh ticks.
+// ─────────────────────────────────────────────────────────────────────
+
+export type { ParseOptions } from 'agent-gov-core';
+
+export interface EnrichOptions {
+  /** Number of keywords to retain. Default 5. */
+  topicLimit?: number;
+  /** Number of primaryFiles to retain. Default 3. */
+  primaryFileLimit?: number;
+  /** Number of commandVerbs to retain. Default 5. */
+  commandVerbLimit?: number;
+}
+
+export interface TrajectoryOptions {
+  /** Pass-through to detectors. When supplied, detectors run on the windowed
+   *  events to populate `drifts[]` and (potentially) flip bucket → 'drifting'. */
+  detectorsEnabled?: boolean;
+  /** v0.3.1: Repository root used for "outside repo" drift detection. When
+   *  supplied, a Write to any path NOT under this root is flagged as drift.
+   *  Pre-v0.3.1 the detector used hardcoded prefixes (`/tmp/`, `/var/`, `~/`)
+   *  which missed cross-project writes (e.g. write to
+   *  `C:\Dev\other-project\` from a session rooted at
+   *  `C:\Dev\sample-app\`). When undefined, falls back to the legacy
+   *  prefixes for backwards compatibility. */
+  repoRoot?: string;
+  /** v0.3.2: Layer 2.5 sequence signal. When supplied, classifyTrajectory
+   *  uses it to override Rule 3 stuck (on stuck_loop), bump converging
+   *  confidence (on tdd_loop), flip to stuck on refuse_to_verify when
+   *  edits ≥ 5, and add an extra signal on exploratory_edit. The verdict
+   *  carries the signal through to the narrative renderer via
+   *  TrajectoryVerdict.sequence. Computed by analyzeSequences() in
+   *  src/sequences.ts; pulse() wires it in. */
+  sequence?: SequenceSignal;
+  /** v0.4.1: per-session exception baseline. Set of drift-finding
+   *  fingerprints the user has explicitly approved (via the TUI `a` key,
+   *  which writes them to `<session.cwd>/.agentpulse-exceptions.json`).
+   *  Drifts whose fingerprint is in the set are dropped before the
+   *  drifting-bucket rule fires. Strict fingerprint match only — broader
+   *  kind-based suppression is deliberately deferred. */
+  exceptions?: Set<string>;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// v0.2 — Live multi-session contracts
+//
+// These types are the synthesis surface for the `agentpulse live` TUI.
+// Three workstreams build against them in parallel:
+//
+//   Workstream A → src/sessions/   (discoverSessions + createSessionWatcher)
+//   Workstream B → src/orchestrator.ts (PulseOrchestrator class)
+//   Workstream C → src/tui/        (Ink TUI consuming the orchestrator)
+//
+// Keep this contract stable. Drift here breaks parallel work.
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * A transcript file we found on disk that looks like an active or recent
+ * agent session.
+ */
+export interface DiscoveredSession {
+  /** Stable id derived from the transcript file path (e.g. SHA-1 short hash). */
+  id: string;
+  runtime: Runtime;
+  /** Absolute path to the `.jsonl` file. */
+  transcriptPath: string;
+  /** Best-effort human label inferred from path parts.
+   *  e.g. `~/.claude/projects/c-Dev-MyApp/...` → `MyApp`. */
+  projectName?: string;
+  /** Epoch ms of the file's last modification time. */
+  lastModified: number;
+  /** Working directory if the runtime supplied one in the transcript. */
+  cwd?: string;
+}
+
+/**
+ * Session-discovery options. All fields optional; sensible defaults.
+ */
+export interface DiscoverOptions {
+  /** Override the discovery roots. Default: platform-aware home-relative
+   *  paths for Claude Code, Cursor, and Codex. Pass an explicit list to
+   *  pin to specific directories. */
+  roots?: string[];
+  /** Skip sessions whose lastModified is older than this many ms ago.
+   *  Default: 1 hour (DEFAULT_STALE_MS). Use Infinity to disable. */
+  staleMs?: number;
+  /** Maximum directory depth to descend below each root when walking for
+   *  `.jsonl` transcripts. The root itself is depth 0, its immediate
+   *  children depth 1, etc. `undefined` (the default) means unbounded.
+   *  A bound keeps a broad `--roots` (or a CI artifact dir with deep
+   *  history) from incurring an unbounded recursive walk + stat-per-file. */
+  maxDepth?: number;
+  /** Directory basenames to skip entirely during the walk (never descended
+   *  into). Case-insensitive exact-segment match. Useful for pruning heavy
+   *  trees that can't hold transcripts (`node_modules`, `.git`, etc.).
+   *  Default: none. */
+  excludeDirs?: string[];
+}
+
+/**
+ * Watcher event payload. Emitted on session add / change / remove.
+ */
+export type SessionEvent =
+  | { type: 'add'; session: DiscoveredSession }
+  | { type: 'change'; session: DiscoveredSession }
+  | { type: 'remove'; sessionId: string };
+
+/**
+ * SessionWatcher interface — duck-typed so the implementation can use either
+ * a real EventEmitter or a lightweight equivalent without forcing the
+ * dependency on TUI consumers that only need .on/.off.
+ */
+export interface SessionWatcher {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  /** Listen for session add/change/remove events. */
+  on(listener: (event: SessionEvent) => void): void;
+  off(listener: (event: SessionEvent) => void): void;
+  /** Get the currently-known sessions without waiting for the next tick. */
+  snapshot(): DiscoveredSession[];
+}
+
+export interface WatcherOptions {
+  /** Initial discovery options. */
+  discover?: DiscoverOptions;
+  /** Debounce window (ms) for coalescing rapid file changes. Default: 300. */
+  debounceMs?: number;
+  /** Polling interval (ms) when the platform doesn't support fs.watch on the
+   *  target path. Default: 1000. */
+  pollIntervalMs?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Orchestrator (Workstream B)
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The orchestrator-tracked state for a single session.
+ */
+export interface SessionState {
+  session: DiscoveredSession;
+  /** Latest computed recap. `null` until the first pulse() completes. */
+  recap: PulseRecap | null;
+  /** Epoch ms of the last successful refresh. */
+  lastUpdated: number;
+  /** When the last pulse() threw, this carries the message. Cleared on
+   *  the next successful refresh. */
+  error?: string;
+  /** True while a refresh is in flight for this session. */
+  pending: boolean;
+  /** v0.4.7: user-chosen alias (`CC1`, `frontend`, etc.). Loaded from
+   *  `<cwd>/.agentpulse-aliases.json` or `~/.agentpulse/aliases.json` at
+   *  refresh time; `undefined` when the user hasn't named this session. */
+  alias?: string;
+}
+
+export interface OrchestratorOptions {
+  /** AgentPulse window passed through to pulse(). Default: 20 min. */
+  windowMs?: number;
+  /** Drift detectors enabled? Default: true. */
+  detectorsEnabled?: boolean;
+  /** Background refresh cadence per session, in ms. Default: 30_000.
+   *  File-change events from the watcher cause immediate refreshes
+   *  independent of this cadence. */
+  refreshIntervalMs?: number;
+}
+
+/**
+ * Orchestrator update event — emitted whenever a SessionState changes
+ * (added, recap refreshed, error, removed).
+ */
+export type OrchestratorEvent =
+  | { type: 'session-added'; state: SessionState }
+  | { type: 'session-updated'; state: SessionState }
+  | { type: 'session-removed'; sessionId: string };
+
+/**
+ * Multi-session pulse orchestrator. Owns the in-memory state map and the
+ * per-session refresh loop. The TUI subscribes to its events for redraws.
+ */
+export interface PulseOrchestrator {
+  add(session: DiscoveredSession): void;
+  remove(sessionId: string): void;
+  /** Force an immediate refresh on a session (used by the watcher when
+   *  the file changes). */
+  refresh(sessionId: string): Promise<void>;
+  /** Snapshot of all current session states. */
+  states(): SessionState[];
+  /** Subscribe to state changes. */
+  on(listener: (event: OrchestratorEvent) => void): void;
+  off(listener: (event: OrchestratorEvent) => void): void;
+  /** Stop background refresh timers. Idempotent. */
+  stop(): void;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TUI (Workstream C)
+// ─────────────────────────────────────────────────────────────────────
+
+/** Redaction level for headless `--once` output. See `LiveOptions.redact`. */
+export type RedactMode = 'none' | 'paths' | 'all';
+
+export interface LiveOptions {
+  /** Window for each session's recap. Default: 20 min. */
+  windowMs?: number;
+  /** Background refresh cadence. Default: 30s. */
+  refreshIntervalMs?: number;
+  /** Drift detectors. Default: true. */
+  detectorsEnabled?: boolean;
+  /** Override discovery roots. */
+  discoveryRoots?: string[];
+  /** Skip sessions older than this. Default: 1h (was 24h pre-v0.2.1 — that
+   *  picked up too many idle transcripts to be useful as a "what's happening
+   *  now" dashboard). Use `Infinity` to disable. */
+  staleMs?: number;
+  /** Hide sessions with zero tool invocations in the current window.
+   *  Default: false — idle sessions are shown (greyed out via low confidence)
+   *  so you can see your cursor/codex sessions even when they aren't actively
+   *  running tools. Set true to filter them out.
+   *
+   *  v0.2.2 inverted the default: previously this was `showIdle` defaulting
+   *  to false (hide idle). Hiding by default was too aggressive — it filtered
+   *  out users' Cursor/Codex sessions whenever they hadn't moved in the last
+   *  20 minutes, even when they were clearly active in the day.
+   */
+  hideIdle?: boolean;
+  /** Maximum number of sessions to render in the list. Default: 10.
+   *  Sessions are sorted by lastModified DESC, so the cap keeps the freshest
+   *  N visible. Use a large number or 0 to disable. */
+  maxSessions?: number;
+  /** Show subagent transcripts (project names matching `agent-<hex>`).
+   *  Default: false — subagent sessions are filtered out because they're
+   *  ephemeral tooling artifacts, not the developer's own work.
+   *  v0.2.3 addition. */
+  showSubagents?: boolean;
+  /** v0.4.0: one-shot mode. Run discovery, pulse every session once, emit
+   *  output, and exit. No TUI. The headless dashboard for cron jobs,
+   *  tmux status bars, and CI checks. */
+  once?: boolean;
+  /** v0.4.0: output format for `--once` mode. `'text'` (default) writes a
+   *  human-readable summary; `'json'` writes a structured snapshot. */
+  format?: 'text' | 'json';
+  /** v0.4.0: CI-gating exit code. When true AND any session ends up in
+   *  `drifting` or `stuck`, the process exits 1 instead of 0. Only honored
+   *  in `--once` mode (the interactive TUI ignores it). */
+  strict?: boolean;
+  /** Fail closed on infrastructure errors. When true AND `strict`, a session
+   *  that threw during analysis (bucket `error` — unreadable/corrupt
+   *  transcript, parser failure) also forces exit 1, instead of the
+   *  fail-open default where a broken transcript passes the gate. Only
+   *  honored in `--once` mode. Default: false (advisory) for the bare CLI;
+   *  the GitHub Action defaults its `fail-on-error` input to true so a
+   *  governance gate can't silently pass when its own analysis crashed. */
+  failOnError?: boolean;
+  /** Redact transcript-derived content from `--once` output (the surface
+   *  that reaches the GitHub step summary / PR comment). `'none'` (default)
+   *  emits everything; `'paths'` reduces file paths and path clusters in
+   *  narratives, signals, and the transcript path to basenames; `'all'`
+   *  additionally drops narratives and signals, leaving only label, bucket,
+   *  confidence, and drift count. Applies to both `text` and `json`. */
+  redact?: RedactMode;
+  /** Maximum directory depth to descend below each discovery root. See
+   *  `DiscoverOptions.maxDepth`. Threaded through to discovery + the
+   *  watcher. Default: unbounded. */
+  maxDepth?: number;
+  /** Directory basenames to skip during discovery. See
+   *  `DiscoverOptions.excludeDirs`. Default: none. */
+  excludeDirs?: string[];
+  /** v0.4.2: local-notification mode for state-transition alerts. Fires when
+   *  a session flips INTO `drifting` or `stuck`. Default: `'none'` —
+   *  notifications are opt-in because they're nag-prone. See
+   *  `src/notifications.ts` for the trigger policy and channel details. */
+  notify?: import('./notifications.js').NotifyMode;
+}

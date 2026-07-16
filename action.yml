@@ -1,0 +1,312 @@
+name: AgentPulse
+description: |
+  Local-only, deterministic trajectory verdict for AI coding agent sessions.
+  Runs `agentpulse live --once` on the workflow's transcript artifacts, gates
+  the build on `drifting` / `stuck` sessions when `strict: true`, posts a
+  markdown summary to the GitHub step summary, and exposes the JSON snapshot
+  as a step output for downstream tooling.
+author: Conal Hickey
+branding:
+  icon: activity
+  color: purple
+
+inputs:
+  transcript-dirs:
+    description: >-
+      Comma-separated directories holding agent transcript JSONL files. If
+      omitted, AgentPulse uses its platform defaults (~/.claude/projects,
+      ~/.cursor/projects, ~/.codex/sessions) which usually don't exist on
+      a clean GitHub runner — so most CI uses will want to download an
+      artifact and point this input at the resulting directory.
+    required: false
+    default: ''
+  window:
+    description: >-
+      Trajectory window per session (e.g. '20m', '1h', '24h'). On CI, a
+      wider window is typical so the verdict reflects the whole session,
+      not just the last 20 minutes.
+    required: false
+    default: '24h'
+  stale:
+    description: >-
+      Skip sessions older than this duration. Wider on CI than the live TUI
+      default (1h) so historical transcripts in an artifact still get
+      analyzed.
+    required: false
+    default: '999d'
+  strict:
+    description: >-
+      When 'true', exit code 1 (and fail the workflow) on any session that
+      classifies as `drifting` or `stuck`. Set 'false' for advisory mode
+      that posts the summary but never fails.
+    required: false
+    default: 'true'
+  no-detectors:
+    description: >-
+      When 'true', skip drift detection entirely. Useful for advisory runs
+      that only care about stuck/converging signal.
+    required: false
+    default: 'false'
+  hide-idle:
+    description: >-
+      When 'true', exclude idle sessions from the summary. On CI you
+      usually want them visible — historical transcripts go straight to
+      `idle` since the agent isn't currently running.
+    required: false
+    default: 'false'
+  show-subagents:
+    description: >-
+      When 'true', include subagent transcripts (project name matching
+      `agent-<hex>`) in the summary. Off by default — those are usually
+      tooling artifacts, not human-facing sessions.
+    required: false
+    default: 'false'
+  max-sessions:
+    description: >-
+      Cap on number of sessions to display in the summary (sorted by
+      lastModified DESC). 0 disables the cap. CI runs often have a lot of
+      historical transcripts; the default keeps the summary readable.
+      Display-only: gating still considers every analyzed session, so a
+      drifting/stuck session below the cap still fails the build.
+    required: false
+    default: '20'
+  fail-on-error:
+    description: >-
+      When 'true' (and strict: true), also fail the workflow if any session
+      could not be analyzed (unreadable / corrupt transcript, parser error).
+      Stops a governance gate from passing silently when its own analysis
+      never ran. Set 'false' to keep analysis errors advisory.
+    required: false
+    default: 'true'
+  redact:
+    description: >-
+      Redact transcript-derived content from the step summary / PR comment
+      (and the JSON snapshot): 'none', 'paths' (default; reduce file paths
+      and path clusters to basenames), or 'all' (also drop narratives and
+      signals). Use 'all' when prompts, topic keywords, or project labels may
+      be sensitive.
+    required: false
+    default: 'paths'
+  max-depth:
+    description: >-
+      Limit how deep AgentPulse recurses below each transcript dir when
+      discovering .jsonl files. Unbounded by default; set a small value when
+      pointing at a broad directory to bound discovery I/O.
+    required: false
+    default: ''
+  exclude:
+    description: >-
+      Comma-separated directory names to skip during discovery (e.g.
+      'node_modules,.git'). Empty by default.
+    required: false
+    default: ''
+  comment-on-pr:
+    description: >-
+      When 'true' and the workflow is running on a `pull_request` event,
+      post the summary as a sticky PR comment that updates in place across
+      pushes (instead of appending a new comment each run). Requires the
+      job to have `pull-requests: write` permission.
+    required: false
+    default: 'false'
+  github-token:
+    description: >-
+      GITHUB_TOKEN for the sticky PR comment. Only consulted when
+      `comment-on-pr: true`. Defaults to the workflow's auto-injected
+      `${{ github.token }}`.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  gating-finding:
+    description: >-
+      'true' when any session classified as `drifting` or `stuck`. Mirrors
+      the JSON snapshot's `hasGatingFinding` field.
+    value: ${{ steps.run.outputs.gating-finding }}
+  session-count:
+    description: Total sessions analyzed.
+    value: ${{ steps.run.outputs.session-count }}
+  drifting-count:
+    description: Number of sessions in the `drifting` bucket.
+    value: ${{ steps.run.outputs.drifting-count }}
+  stuck-count:
+    description: Number of sessions in the `stuck` bucket.
+    value: ${{ steps.run.outputs.stuck-count }}
+  error-count:
+    description: Number of sessions that failed to analyze (bucket `error`).
+    value: ${{ steps.run.outputs.error-count }}
+  json-report-path:
+    description: Filesystem path of the JSON snapshot written by the action.
+    value: ${{ steps.run.outputs.json-report-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node for AgentPulse
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - name: Install and build AgentPulse
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        npm ci --ignore-scripts
+        npm run build
+
+    - name: Run AgentPulse one-shot
+      id: run
+      shell: bash
+      env:
+        AP_TRANSCRIPT_DIRS: ${{ inputs.transcript-dirs }}
+        AP_WINDOW: ${{ inputs.window }}
+        AP_STALE: ${{ inputs.stale }}
+        AP_STRICT: ${{ inputs.strict }}
+        AP_NO_DETECTORS: ${{ inputs.no-detectors }}
+        AP_HIDE_IDLE: ${{ inputs.hide-idle }}
+        AP_SHOW_SUBAGENTS: ${{ inputs.show-subagents }}
+        AP_MAX_SESSIONS: ${{ inputs.max-sessions }}
+        AP_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        AP_REDACT: ${{ inputs.redact }}
+        AP_MAX_DEPTH: ${{ inputs.max-depth }}
+        AP_EXCLUDE: ${{ inputs.exclude }}
+      run: |
+        set -euo pipefail
+
+        report_json="${RUNNER_TEMP:-.}/agentpulse-report.json"
+        report_text="${RUNNER_TEMP:-.}/agentpulse-report.txt"
+        # Execute the source from the user-pinned Action ref. npm ci installs
+        # exactly the dependency graph in package-lock.json and the previous
+        # step builds that checked-out source. Pinning this Action to a full
+        # commit SHA therefore pins AgentPulse itself; the npm registry remains
+        # the download source for the lockfile-pinned dependencies.
+        cli=(node "$GITHUB_ACTION_PATH/dist/cli.js")
+
+        args=(live --once)
+
+        # JSON to the file we'll parse + post; the text mirror goes to the
+        # step summary so humans can read it without jq.
+        if [ -n "$AP_TRANSCRIPT_DIRS" ]; then
+          args+=(--roots "$AP_TRANSCRIPT_DIRS")
+        fi
+        args+=(--window "$AP_WINDOW")
+        args+=(--stale "$AP_STALE")
+        if [ "$AP_NO_DETECTORS" = "true" ]; then
+          args+=(--no-detectors)
+        fi
+        if [ "$AP_HIDE_IDLE" = "true" ]; then
+          args+=(--hide-idle)
+        fi
+        if [ "$AP_SHOW_SUBAGENTS" = "true" ]; then
+          args+=(--show-subagents)
+        fi
+        args+=(--max-sessions "$AP_MAX_SESSIONS")
+        if [ -n "$AP_REDACT" ] && [ "$AP_REDACT" != "none" ]; then
+          args+=(--redact "$AP_REDACT")
+        fi
+        if [ -n "$AP_MAX_DEPTH" ]; then
+          args+=(--max-depth "$AP_MAX_DEPTH")
+        fi
+        if [ -n "$AP_EXCLUDE" ]; then
+          args+=(--exclude "$AP_EXCLUDE")
+        fi
+
+        # Two passes: one JSON (parsed + uploaded), one text (human summary).
+        # AgentPulse exits 1 on `--strict` + drifting/stuck; we don't pass
+        # --strict here because we apply the gate ourselves after parsing
+        # the JSON (so the workflow check fails on our own ::error line,
+        # not on a downstream CLI exit code).
+        set +e
+        "${cli[@]}" "${args[@]}" --format json > "$report_json"
+        "${cli[@]}" "${args[@]}" --format text > "$report_text"
+        set -e
+
+        # Parse the JSON outputs.
+        gating_finding="$(node -e "const fs = require('node:fs'); const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(d.hasGatingFinding ? 'true' : 'false')" "$report_json")"
+        session_count="$(node -e "const fs = require('node:fs'); const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(d.sessionCount ?? 0)" "$report_json")"
+        drifting_count="$(node -e "const fs = require('node:fs'); const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(d.bucketCounts?.drifting ?? 0)" "$report_json")"
+        stuck_count="$(node -e "const fs = require('node:fs'); const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(d.bucketCounts?.stuck ?? 0)" "$report_json")"
+        error_count="$(node -e "const fs = require('node:fs'); const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(d.bucketCounts?.error ?? 0)" "$report_json")"
+
+        echo "gating-finding=$gating_finding" >> "$GITHUB_OUTPUT"
+        echo "session-count=$session_count" >> "$GITHUB_OUTPUT"
+        echo "drifting-count=$drifting_count" >> "$GITHUB_OUTPUT"
+        echo "stuck-count=$stuck_count" >> "$GITHUB_OUTPUT"
+        echo "error-count=$error_count" >> "$GITHUB_OUTPUT"
+        echo "json-report-path=$report_json" >> "$GITHUB_OUTPUT"
+
+        # Stream the text report into the step summary so reviewers see it
+        # without leaving the run page.
+        if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ -f "$report_text" ]; then
+          {
+            echo "## AgentPulse"
+            echo
+            echo '```'
+            cat "$report_text"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        # Apply gating. The agentpulse CLI itself sets exit 1 when
+        # strict+gating; we mirror that here for the workflow check. We use
+        # the JSON-parsed fields rather than the CLI exit code so this still
+        # works when strict was set via the input flag.
+        gate_fail=0
+        if [ "$AP_STRICT" = "true" ] && [ "$gating_finding" = "true" ]; then
+          echo "::error::AgentPulse found $drifting_count drifting and $stuck_count stuck session(s)."
+          gate_fail=1
+        fi
+        # #F2: fail closed on infrastructure errors. Pre-fix, a run of only
+        # unreadable/corrupt transcripts (bucket `error`) passed the gate
+        # silently — the governance check went green though analysis never
+        # ran. With fail-on-error (default true), that's a build failure.
+        if [ "$AP_STRICT" = "true" ] && [ "$AP_FAIL_ON_ERROR" = "true" ] && [ "${error_count:-0}" -gt 0 ]; then
+          echo "::error::AgentPulse could not analyze $error_count session(s) (unreadable/corrupt transcript). Failing the gate (fail-on-error). Set fail-on-error: false to make this advisory."
+          gate_fail=1
+        fi
+        if [ "$gate_fail" = "1" ]; then
+          exit 1
+        fi
+
+    - name: Post sticky PR comment
+      if: |
+        inputs.comment-on-pr == 'true' &&
+        github.event_name == 'pull_request' &&
+        always()
+      shell: bash
+      env:
+        REPORT_PATH: ${{ steps.run.outputs.json-report-path }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        pr_number="$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")"
+        if [ -z "$pr_number" ]; then
+          echo "::notice::No PR number on this event; skipping sticky comment."
+          exit 0
+        fi
+
+        marker='<!-- agentpulse:pr-summary -->'
+        comment_file="${RUNNER_TEMP:-.}/agentpulse-comment.md"
+        {
+          printf '%s\n\n' "$marker"
+          echo "### AgentPulse"
+          echo
+          if [ "${{ steps.run.outputs.gating-finding }}" = "true" ]; then
+            echo "⚠ **${{ steps.run.outputs.drifting-count }} drifting** · **${{ steps.run.outputs.stuck-count }} stuck**"
+          else
+            echo "✅ No drifting or stuck sessions detected."
+          fi
+          echo
+          echo "**Sessions analyzed:** ${{ steps.run.outputs.session-count }}"
+          echo
+          echo '```'
+          cat "${RUNNER_TEMP:-.}/agentpulse-report.txt"
+          echo '```'
+        } > "$comment_file"
+
+        existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" --paginate --jq ".[] | select(.body != null and (.body | contains(\"$marker\"))) | .id" | head -n 1)"
+        if [ -n "$existing" ]; then
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -F body=@"$comment_file" > /dev/null
+        else
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" -F body=@"$comment_file" > /dev/null
+        fi

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Run on both Ubuntu and Windows. Windows matters disproportionately here:
+# half the v0.2.x changelog is Windows-terminal / Windows-path fixes (alt
+# screen buffer, case-insensitive watcher, slug decoder Windows-drive
+# handling). Catching regressions on win32 in CI > catching them in
+# screenshots from real users.
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm audit --omit=dev
+      # Smoke test: the dist binary actually boots and prints usage. Catches
+      # shebang / bin path / dist-file-array breakage that the unit tests
+      # don't.
+      - name: CLI smoke test
+        run: node dist/cli.js --help
+
+  action-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the local composite Action against synthetic fixtures
+        uses: ./
+        with:
+          transcript-dirs: test/fixtures
+          window: 999d
+          stale: 999d
+          strict: 'false'
+          redact: all
+          max-sessions: '5'

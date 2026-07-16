@@ -1,0 +1,124 @@
+{
+  "_doc": "Golden replay corpus (v0.6.1). Each entry pairs a transcript fixture with the verdict the pipeline must produce when pulse() runs against it. The harness in corpus.test.mjs enforces these labels — any future change to enrich / sequences / trajectory / narrative that flips a bucket here is caught immediately. To add a scenario: drop a JSONL into this directory, add a manifest entry, and let CI fail until the implementation matches the label.",
+  "scenarios": [
+    {
+      "file": "converging.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Multiple edits to one file under src/auth, verifications go fail→pass (improving trend), user affirms ('perfect, thanks'). Textbook converging."
+    },
+    {
+      "file": "stuck.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "stuck",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "expectedSequence": "stuck_loop",
+      "rationale": "Same file edited three times, npm test fails each time, user pushes back with 'still broken, try again'. Stuck_loop on src/auth/login.ts."
+    },
+    {
+      "file": "exploring.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "exploring",
+      "minConfidence": 0.3,
+      "expectedDriftCount": 0,
+      "rationale": "Glob + 4 Reads + Grep, zero edits. Classic exploration shape — agent is orienting itself."
+    },
+    {
+      "file": "done.jsonl",
+      "endAt": "2026-05-23T10:18:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "done",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Edit + passing test + 'Done — fixed' completion verb, then >15min idle gap to windowEnd. Done bucket entry conditions."
+    },
+    {
+      "file": "drifting-shell-exfil.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "drifting",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 1,
+      "rationale": "curl|sh — the shell_exfil drift detector must fire and flip the bucket regardless of other signals."
+    },
+    {
+      "file": "idle.jsonl",
+      "endAt": "2026-05-23T10:20:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "idle",
+      "minConfidence": 0.3,
+      "expectedDriftCount": 0,
+      "rationale": "Three edits between T0+30s and T0+2min, then nothing. windowEnd is T0+20min, so last event was ~18min ago — well past the 5min idle threshold."
+    },
+    {
+      "file": "cursor-converging.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "v0.6.2 regression: Cursor uses Anthropic envelope but tool inputs key on `path`, not `file_path`. Pre-fix the enrichment + sequences layers silently dropped Cursor edits — primary-files came up empty and the verdict slipped to exploring/idle. With extractFilePath now checking `path` too, this lands as converging with the green→pass trend."
+    },
+    {
+      "file": "codex-converging.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "v0.6.2 regression: Codex emits `shell` (not `Bash`) for command exec and `apply_patch` (not `Edit`) for filesystem mutation, with arguments JSON-encoded for shell and patch-formatted for apply_patch. Pre-fix every Codex tool call classified as `other`. With canonicalToolName + apply_patch path extraction, the same fail→pass shape now reads as converging."
+    },
+    {
+      "file": "codex-desktop-done.jsonl",
+      "endAt": "2026-05-23T10:18:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "done",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Current Codex Desktop emits `shell_command` for terminal work and often signs off with shipped/pushed/working-tree-clean language. This should classify as done after the idle gap."
+    },
+    {
+      "file": "codex-desktop-custom-converging.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Current Codex Desktop emits apply_patch as response_item/custom_tool_call. It must count as editing so fail-to-pass desktop sessions do not show 0 editing actions."
+    },
+    {
+      "file": "antigravity-converging.jsonl",
+      "endAt": "2026-05-23T10:02:10.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Antigravity TDD loop: exploring directory, editing types.ts, test fails with exit code 1, fixing types.ts, test passes successfully with exit code 0, human says 'perfect, thanks!'."
+    },
+    {
+      "file": "doc-edits-no-tests.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "expectedSequence": "none",
+      "rationale": "False-positive guard: 5 prose edits under docs/ (guide.md x3, intro.md, api.md), no test command. Editing a doc set legitimately has nothing to verify, so refuse_to_verify must NOT fire and the bucket must NOT flip to stuck. Lands on converging via Rule 4b (5 edits, docs cluster 100%, primary file edited 3x). Pre-fix this read as stuck."
+    },
+    {
+      "file": "ssh-keys-cwd.jsonl",
+      "endAt": "2026-05-23T10:05:00.000Z",
+      "windowMs": 1200000,
+      "expectedBucket": "converging",
+      "minConfidence": 0.6,
+      "expectedDriftCount": 0,
+      "rationale": "Regression guard for the privileged-path detector with detectors ON. A normal fail→pass session whose cwd is /home/demo/.ssh-keys must NOT trip the .ssh rule — the segment regex anchors on .ssh followed by a separator or end, so .ssh-keys (hyphen) is correctly NOT a match. Zero drifts; converging on the green trend."
+    }
+  ]
+}

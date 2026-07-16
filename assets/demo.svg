@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AgentPulse animated demo, v0.7.2 — README hero.
+
+  A self-contained SMIL animation (no JS, no external assets) that loops a
+  15s, three-beat story of the *selected* session's trajectory drifting in
+  real time — the thing AgentPulse exists to catch:
+
+    Beat 1 (0-5s)   converging ● — tight TDD loop, tests back to green
+    Beat 2 (5-10s)  stuck      ▲ — editing in circles, no verify since the fail
+    Beat 3 (10-15s) drifting   ⚠ — wrote ~/.ssh/config, a privileged path
+
+  Each beat is one dashboard "refresh". The list row pill, the detail-pane
+  narrative, the verdict line, the signals, and the sparkline all cross-fade
+  together so the verdict and its evidence always agree. The other six rows
+  are static context (project clustering, aliases, mixed runtimes).
+
+  Colours + pills mirror src/tui/theme.ts exactly:
+    converging green #9ece6a ●   stuck yellow #e0af68 ▲   done blue #7aa2f7 ■
+    drifting red #f7768e ⚠       exploring/idle gray ◐ / ○
+  Tokyo-Night background, monospace 13px / ~7.8px char / 18px line height.
+
+  Cross-fade timeline (dur=15s): keyTimes are normalised beat boundaries
+  5s=0.3333, 10s=0.6667, 15s=1.0, with ~0.3s (0.02) fades.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1100 640"
+     width="1100" height="640"
+     font-family="'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace"
+     font-size="13">
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1100" height="640" fill="#1a1b26"/>
+
+  <!-- ── Header box: brand + live pulse + session count ── -->
+  <rect x="12" y="12" width="1076" height="36" rx="8" ry="8" fill="none" stroke="#7dcfff" stroke-width="1"/>
+  <text x="28" y="34" fill="#c0caf5">
+    <tspan font-weight="700">AgentPulse</tspan><tspan fill="#565f89"> · by </tspan><tspan font-weight="700" fill="#f7768e">RAGE</tspan>
+  </text>
+  <circle cx="214" cy="29" r="4" fill="#9ece6a">
+    <animate attributeName="opacity" values="1;0.2;1" dur="1.6s" repeatCount="indefinite"/>
+  </circle>
+  <text x="224" y="33" fill="#9ece6a" font-weight="700" font-size="11">LIVE</text>
+  <text x="1072" y="34" fill="#565f89" text-anchor="end">7 sessions · refresh 30s</text>
+
+  <!-- ── Session list box ── -->
+  <rect x="12" y="56" width="1076" height="146" rx="8" ry="8" fill="none" stroke="#414868" stroke-width="1"/>
+
+  <!-- Row 1 (selected) — animated: this session's pill + bucket evolve each beat.
+       The arrow + label are constant, so we redraw the whole row per beat group. -->
+  <!-- Beat 1: converging -->
+  <g opacity="1">
+    <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.3333;0.3533;0.98;1" dur="15s" repeatCount="indefinite"/>
+    <text x="28" y="80">
+      <tspan fill="#7dcfff" font-weight="700">▸ </tspan><tspan fill="#9ece6a">●</tspan><tspan fill="#c0caf5">  </tspan><tspan fill="#7dcfff" font-weight="700">CC1</tspan><tspan fill="#565f89"> · </tspan><tspan fill="#c0caf5" font-weight="700">AgentPulse</tspan><tspan fill="#565f89"> (claude-code)</tspan>
+    </text>
+    <text x="640" y="80" fill="#9ece6a">converging</text>
+    <text x="1072" y="80" fill="#565f89" text-anchor="end">updated 6s ago</text>
+  </g>
+  <!-- Beat 2: stuck -->
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.3333;0.3533;0.6667;0.6867;1" dur="15s" repeatCount="indefinite"/>
+    <text x="28" y="80">
+      <tspan fill="#7dcfff" font-weight="700">▸ </tspan><tspan fill="#e0af68">▲</tspan><tspan fill="#c0caf5">  </tspan><tspan fill="#7dcfff" font-weight="700">CC1</tspan><tspan fill="#565f89"> · </tspan><tspan fill="#c0caf5" font-weight="700">AgentPulse</tspan><tspan fill="#565f89"> (claude-code)</tspan>
+    </text>
+    <text x="640" y="80" fill="#e0af68">stuck</text>
+    <text x="1072" y="80" fill="#565f89" text-anchor="end">updated 4s ago</text>
+  </g>
+  <!-- Beat 3: drifting -->
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.6667;0.6867;0.98;1" dur="15s" repeatCount="indefinite"/>
+    <text x="28" y="80">
+      <tspan fill="#7dcfff" font-weight="700">▸ </tspan><tspan fill="#f7768e">⚠</tspan><tspan fill="#c0caf5">  </tspan><tspan fill="#7dcfff" font-weight="700">CC1</tspan><tspan fill="#565f89"> · </tspan><tspan fill="#c0caf5" font-weight="700">AgentPulse</tspan><tspan fill="#565f89"> (claude-code)</tspan>
+    </text>
+    <text x="640" y="80" fill="#f7768e" font-weight="700">drifting (1)</text>
+    <text x="1072" y="80" fill="#565f89" text-anchor="end">updated 2s ago</text>
+  </g>
+
+  <!-- Rows 2-7 — static context -->
+  <text x="28" y="98"><tspan fill="#c0caf5">  </tspan><tspan fill="#9ece6a">●</tspan><tspan fill="#c0caf5">  </tspan><tspan fill="#7dcfff">CC2</tspan><tspan fill="#565f89"> · </tspan><tspan fill="#c0caf5">AgentPulse</tspan><tspan fill="#565f89"> (claude-code)</tspan></text>
+  <text x="640" y="98" fill="#9ece6a">converging</text>
+  <text x="1072" y="98" fill="#565f89" text-anchor="end">updated 12s ago</text>
+
+  <text x="28" y="116"><tspan fill="#c0caf5">  </tspan><tspan fill="#565f89">◐</tspan><tspan fill="#c0caf5">  </tspan><tspan fill="#c0caf5">AgentPulse</tspan><tspan fill="#565f89"> (codex)</tspan></text>
+  <text x="640" y="116" fill="#565f89">exploring</text>
+  <text x="1072" y="116" fill="#565f89" text-anchor="end">updated 18s ago</text>
+
+  <text x="28" y="134"><tspan fill="#c0caf5">  </tspan><tspan fill="#7aa2f7">■</tspan><tspan fill="#c0caf5">  </tspan><tspan fill="#7dcfff">frontend</tspan><tspan fill="#565f89"> · </tspan><tspan fill="#c0caf5">ontology</tspan><tspan fill="#565f89"> (cursor)</tspan></text>
+  <text x="640" y="134" fill="#7aa2f7">done</text>
+  <text x="1072" y="134" fill="#565f89" text-anchor="end">updated 22s ago</text>
+
+  <text x="28" y="152"><tspan fill="#c0caf5">  </tspan><tspan fill="#6b7089">○</tspan><tspan fill="#c0caf5">  </tspan><tspan fill="#c0caf5">ontology</tspan><tspan fill="#565f89"> (claude-code)</tspan></text>
+  <text x="640" y="152" fill="#6b7089">idle</text>
+  <text x="1072" y="152" fill="#565f89" text-anchor="end">updated 4 min ago</text>
+
+  <text x="28" y="170"><tspan fill="#c0caf5">  </tspan><tspan fill="#7aa2f7">■</tspan><tspan fill="#c0caf5">  </tspan><tspan fill="#c0caf5">core</tspan><tspan fill="#565f89"> (claude-code)</tspan></text>
+  <text x="640" y="170" fill="#7aa2f7">done</text>
+  <text x="1072" y="170" fill="#565f89" text-anchor="end">updated 8 min ago</text>
+
+  <text x="28" y="188"><tspan fill="#c0caf5">  </tspan><tspan fill="#6b7089">○</tspan><tspan fill="#c0caf5">  </tspan><tspan fill="#c0caf5">agent-gov-core</tspan><tspan fill="#565f89"> (claude-code)</tspan></text>
+  <text x="640" y="188" fill="#6b7089">idle</text>
+  <text x="1072" y="188" fill="#565f89" text-anchor="end">updated 12 min ago</text>
+
+  <!-- ── Detail pane box ── -->
+  <rect x="12" y="210" width="1076" height="370" rx="8" ry="8" fill="none" stroke="#414868" stroke-width="1"/>
+
+  <!-- Header + path (constant) -->
+  <text x="28" y="234"><tspan font-weight="700" fill="#7dcfff">CC1 · </tspan><tspan font-weight="700" fill="#c0caf5">AgentPulse</tspan><tspan fill="#565f89"> (claude-code)</tspan></text>
+  <text x="28" y="252" fill="#565f89" font-size="12">C:\Users\demo\.claude\projects\C--\5e9d65b1-9164-4d07-bb35-150ea00afbff.jsonl</text>
+  <text x="28" y="398" fill="#c0caf5">Signals:</text>
+
+  <!-- Beat 1 detail: converging -->
+  <g opacity="1">
+    <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.3333;0.3533;0.98;1" dur="15s" repeatCount="indefinite"/>
+    <text x="28" y="282" fill="#c0caf5">Your agent has been working on <tspan font-weight="700">session</tspan> for <tspan font-weight="700">12 minutes</tspan>. It focused on</text>
+    <text x="28" y="300" fill="#c0caf5"><tspan font-weight="700" fill="#a9b1d6">`src/auth`</tspan>, made <tspan font-weight="700">4</tspan> changes to <tspan font-weight="700" fill="#a9b1d6">`…/auth/session.ts`</tspan>, and ran tests after each.</text>
+    <text x="28" y="318" fill="#c0caf5">Tests went from failing to passing. Looks like it solved it.</text>
+    <text x="28" y="368"><tspan fill="#c0caf5">Verdict: </tspan><tspan fill="#9ece6a" font-weight="700">● converging</tspan><tspan fill="#565f89"> (confidence 0.85)</tspan></text>
+    <text x="28" y="416" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> top cluster <tspan fill="#a9b1d6">src/auth</tspan> covers 86% of activity</text>
+    <text x="28" y="434" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> tests recovered to green (2 edit→verify cycles)</text>
+    <text x="28" y="452" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> 4 edits across 1 file</text>
+    <text x="28" y="488"><tspan fill="#c0caf5">Activity: </tspan><tspan fill="#9ece6a">▂▃▅▆▇█▇▆▅▆▇█</tspan><tspan fill="#565f89">  (72 events over 12 min)</tspan></text>
+  </g>
+  <!-- Beat 2 detail: stuck -->
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.3333;0.3533;0.6667;0.6867;1" dur="15s" repeatCount="indefinite"/>
+    <text x="28" y="282" fill="#c0caf5">Your agent has made <tspan font-weight="700">7</tspan> more edits to <tspan font-weight="700" fill="#a9b1d6">`…/auth/session.ts`</tspan> in the</text>
+    <text x="28" y="300" fill="#c0caf5">last <tspan font-weight="700">3 minutes</tspan> but hasn't run the tests since the first failure.</text>
+    <text x="28" y="318" fill="#c0caf5">It looks wedged — editing in circles without verifying.</text>
+    <text x="28" y="368"><tspan fill="#c0caf5">Verdict: </tspan><tspan fill="#e0af68" font-weight="700">▲ stuck</tspan><tspan fill="#565f89"> (confidence 0.72)</tspan></text>
+    <text x="28" y="416" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> 7 edits, 0 verifications since the last failure</text>
+    <text x="28" y="434" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> same file edited repeatedly (refuse-to-verify loop)</text>
+    <text x="28" y="452" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> no green test run in this window</text>
+    <text x="28" y="488"><tspan fill="#c0caf5">Activity: </tspan><tspan fill="#e0af68">▅▆▅▆▆▅▆▅▆▅▆▅</tspan><tspan fill="#565f89">  (repeated edits, no verify)</tspan></text>
+  </g>
+  <!-- Beat 3 detail: drifting -->
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.6667;0.6867;0.98;1" dur="15s" repeatCount="indefinite"/>
+    <text x="28" y="282" fill="#c0caf5">Your agent just edited <tspan font-weight="700" fill="#f7768e">`~/.ssh/config`</tspan> — a privileged path</text>
+    <text x="28" y="300" fill="#c0caf5">outside the project (SSH/AWS/Kube/system paths). That's well off task.</text>
+    <text x="28" y="318" fill="#c0caf5">Worth a look before it goes any further.</text>
+    <text x="28" y="368"><tspan fill="#c0caf5">Verdict: </tspan><tspan fill="#f7768e" font-weight="700">⚠ drifting (1)</tspan><tspan fill="#565f89"> (confidence 0.90)</tspan></text>
+    <text x="28" y="416" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> privileged-path write: <tspan fill="#f7768e">~/.ssh/config</tspan></text>
+    <text x="28" y="434" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> 1 drift finding (press <tspan fill="#7dcfff">a</tspan> to whitelist if intended)</text>
+    <text x="28" y="452" fill="#c0caf5">  <tspan fill="#565f89">·</tspan> activity outside the repo root</text>
+    <text x="28" y="488"><tspan fill="#c0caf5">Activity: </tspan><tspan fill="#f7768e">▂▃▅█▂▁▁▁▁▁▁▁</tspan><tspan fill="#565f89">  (spike outside repo root)</tspan></text>
+  </g>
+
+  <!-- Footer timing (constant) -->
+  <text x="28" y="538" fill="#565f89">Last refresh: just now · next refresh: ~30s</text>
+
+  <!-- ── Keyboard hint bar ── -->
+  <text x="28" y="610" fill="#565f89">↑↓ / WS select · r refresh · a whitelist · n rename · ? help · q quit</text>
+  <text x="1072" y="610" text-anchor="end"><tspan fill="#565f89">▲</tspan><tspan fill="#f7768e" font-weight="700">RAGE</tspan></text>
+</svg>

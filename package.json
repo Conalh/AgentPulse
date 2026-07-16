@@ -1,0 +1,75 @@
+{
+  "name": "@conalh/agentpulse",
+  "version": "0.8.1",
+  "description": "Live trajectory verdict for AI coding agent sessions. Reads Claude Code / Cursor / Codex transcripts locally, classifies what the agent is doing, renders it as plain English. No LLM, no cloud, no telemetry.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "agentpulse": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "assets/demo.svg",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "author": "Conal Hickey",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Conalh/AgentPulse.git"
+  },
+  "homepage": "https://github.com/Conalh/AgentPulse#readme",
+  "bugs": {
+    "url": "https://github.com/Conalh/AgentPulse/issues"
+  },
+  "packageManager": "npm@11.13.0",
+  "keywords": [
+    "ai",
+    "agent",
+    "claude-code",
+    "cursor",
+    "codex",
+    "observability",
+    "governance",
+    "transcript",
+    "tui",
+    "terminal",
+    "dashboard",
+    "ink",
+    "no-llm",
+    "agent-monitoring",
+    "ci-gate",
+    "agent-gov"
+  ],
+  "dependencies": {
+    "agent-gov-core": "^1.4.0",
+    "ink": "^7.1.0",
+    "react": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.17",
+    "ink-testing-library": "^4.0.0",
+    "typescript": "^5.9.3"
+  }
+}
