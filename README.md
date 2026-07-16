@@ -204,6 +204,7 @@ Best-effort: missing OS notification utilities are a silent no-op rather than a 
     strict: 'true'
     redact: paths
     comment-on-pr: 'true'
+    github-token: ${{ github.token }}
 ```
 
 The action runs `agentpulse live --once` against the provided transcript directory, writes a markdown summary to the GitHub step summary, optionally posts a sticky PR comment, and fails the workflow when `strict: true` and any session is `drifting` or `stuck`.
@@ -215,6 +216,10 @@ hosted output reduces paths to basenames (`redact: paths`). Set
 labels, narratives, and topic keywords may also be sensitive. Other inputs
 include `max-depth` and `exclude` for bounded discovery, plus `hide-idle`,
 `max-sessions`, `no-detectors`, and `show-subagents`.
+
+Sticky PR comments require `pull-requests: write` permission and an explicit
+`github-token: ${{ github.token }}` input. Omit both when the step summary is
+enough.
 
 > **Supply chain.** The Action builds and executes the checked-out Action source
 > with `npm ci --ignore-scripts`, using the committed lockfile. Pin to a full

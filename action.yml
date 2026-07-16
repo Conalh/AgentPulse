@@ -110,11 +110,11 @@ inputs:
     default: 'false'
   github-token:
     description: >-
-      GITHUB_TOKEN for the sticky PR comment. Only consulted when
-      `comment-on-pr: true`. Defaults to the workflow's auto-injected
-      `${{ github.token }}`.
+      GITHUB_TOKEN for the sticky PR comment. Required when
+      `comment-on-pr: true`; pass `${{ github.token }}` explicitly from the
+      calling workflow.
     required: false
-    default: ${{ github.token }}
+    default: ''
 
 outputs:
   gating-finding:
@@ -279,6 +279,10 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
+        if [ -z "${GH_TOKEN:-}" ]; then
+          echo "::error::github-token is required when comment-on-pr is true."
+          exit 1
+        fi
         pr_number="$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")"
         if [ -z "$pr_number" ]; then
           echo "::notice::No PR number on this event; skipping sticky comment."

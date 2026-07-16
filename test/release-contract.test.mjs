@@ -30,7 +30,10 @@ test('release contract: composite Action runs a supported Node version', () => {
 
 test('release contract: hosted Action output redacts paths by default', () => {
   const redactInput = action.match(/\n  redact:\n([\s\S]*?)\n  max-depth:/)?.[1] ?? '';
+  const tokenInput = action.match(/\n  github-token:\n([\s\S]*?)\n\noutputs:/)?.[1] ?? '';
 
   assert.match(redactInput, /default:\s*'paths'/);
   assert.match(redactInput, /reduce file paths/);
+  assert.match(tokenInput, /default:\s*''/);
+  assert.match(tokenInput, /Required when/);
 });
