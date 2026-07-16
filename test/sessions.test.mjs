@@ -191,7 +191,7 @@ test('watcher polling ignores transcripts older than staleMs', async () => {
   // portable beyond the Windows + Node 24 environment where it was observed.
   const claudeRoot = join(root, 'later', '.claude', 'projects');
   const watcher = createSessionWatcher({
-    discover: { roots: [claudeRoot], staleMs: 100 },
+    discover: { roots: [claudeRoot], staleMs: 5_000 },
     debounceMs: 20,
     pollIntervalMs: 50,
   });
@@ -204,10 +204,27 @@ test('watcher polling ignores transcripts older than staleMs', async () => {
     writeFileSync(transcript, JSON.stringify({ type: 'user' }) + '\n');
     const old = (Date.now() - 60_000) / 1000;
     utimesSync(transcript, old, old);
+    const freshTranscript = join(claudeRoot, 'fresh.jsonl');
+    writeFileSync(freshTranscript, JSON.stringify({ type: 'user' }) + '\n');
 
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    assert.equal(events.some((event) => event.type === 'add'), false);
-    assert.deepEqual(watcher.snapshot(), []);
+    assert.equal(
+      await waitFor(() => events.some(
+        (event) => event.type === 'add' && event.session.transcriptPath === freshTranscript,
+      )),
+      true,
+      'fresh control transcript proves the polling scan ran',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(
+      events.some(
+        (event) => event.type === 'add' && event.session.transcriptPath === transcript,
+      ),
+      false,
+    );
+    assert.deepEqual(
+      watcher.snapshot().map((session) => session.transcriptPath),
+      [freshTranscript],
+    );
   } finally {
     await watcher.stop();
     rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
