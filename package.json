@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "agentpulse": "./dist/cli.js"
+    "agentpulse": "dist/cli.js"
   },
   "exports": {
     ".": {

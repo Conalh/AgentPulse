@@ -8,12 +8,18 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const action = readFileSync(join(root, 'action.yml'), 'utf8');
 const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
+const cli = readFileSync(join(root, 'src', 'cli.ts'), 'utf8');
 
 test('release contract: package version has a matching changelog section', () => {
   assert.match(
     changelog,
     new RegExp(`^## \\[${packageJson.version.replaceAll('.', '\\.')}\\]`, 'm'),
   );
+});
+
+test('release contract: package exposes the AgentPulse executable', () => {
+  assert.equal(packageJson.bin?.agentpulse, 'dist/cli.js');
+  assert.match(cli, /^#!\/usr\/bin\/env node/);
 });
 
 test('release contract: composite Action runs a supported Node version', () => {
